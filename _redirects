@@ -1,0 +1,20 @@
+# Cloudflare Pages routing for kavogrid.org
+#
+#   kavogrid.org         -> storefront (index.html, served automatically)
+#   kavogrid.org/admin   -> admin console (admin.html)
+#
+# 200 = rewrite: serve that file while keeping the clean URL in the address bar.
+# admin.html loads its scripts with RELATIVE paths (lib/..., admin/...), so it
+# must be served at "/admin" with NO trailing slash — the trailing-slash form
+# and the legacy paths are 301'd to normalise.
+
+https://www.kavogrid.org/*   https://kavogrid.org/:splat   301
+
+/admin/            /admin        301
+/admindashboard    /admin        301
+/admindashboard/   /admin        301
+/admin             /admin.html   200
+
+/home.html         /             301
+/home              /             301
+/index.html        /             301

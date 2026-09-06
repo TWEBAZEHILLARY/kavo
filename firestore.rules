@@ -1,0 +1,15 @@
+rules_version = '2';
+// Paste into Firebase console → Firestore Database → Rules → Publish.
+// The site has no server: the storefront must READ the catalogue/rates/hero
+// media and WRITE orders + inquiries; the admin console writes everything.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /pps_sync/{key} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasOnly(['json', 'updatedAt'])
+                   && request.resource.data.json is string
+                   && request.resource.data.json.size() < 1000000;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin.html
+Disallow: /admin/
+Disallow: /uploads/
+
+Sitemap: https://kavogrid.org/sitemap.xml
