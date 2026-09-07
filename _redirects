@@ -8,7 +8,7 @@
 # must be served at "/admin" with NO trailing slash — the trailing-slash form
 # and the legacy paths are 301'd to normalise.
 
-https://www.kavogrid.org/*   https://kavogrid.org/:splat   301
+
 
 /admin/            /admin        301
 /admindashboard    /admin        301
