@@ -10,11 +10,7 @@
 
 
 
-/admin/            /admin        301
-/admindashboard    /admin        301
-/admindashboard/   /admin        301
-/admin             /admin.html   200
-
-/home.html         /             301
-/home              /             301
-/index.html        /             301
+/admindashboard    /admin   301
+/admindashboard/   /admin   301
+/home.html         /        301
+/home              /        301
