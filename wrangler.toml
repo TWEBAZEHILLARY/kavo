@@ -2,7 +2,7 @@
 # The site is 100% static: Pages serves this folder as-is (no build step).
 # Routing lives in _redirects, headers in _headers.
 # Custom domains (kavogrid.org + www) are attached in the Pages dashboard.
-name = "kavogrid"
+name = "kavo"
 compatibility_date = "2026-06-25"
 
 [assets]
