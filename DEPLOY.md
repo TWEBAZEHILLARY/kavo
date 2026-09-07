@@ -36,18 +36,18 @@ Every later `git push` to `main` redeploys automatically.
 
 **Google:** go to https://search.google.com/search-console, add `kavogrid.org` (Domain property, verify with the DNS TXT record Cloudflare lets you add), then submit `https://kavogrid.org/sitemap.xml`. The homepage appears in results within a few days; the `/admin` page is marked no-index and will not.
 
-## 3 · Shared database (Firebase Firestore) — makes admin changes reach every visitor
+## 3 · Shared database (Cloudflare D1) — makes admin changes reach every visitor
 
-Without this step the site still works, but each browser keeps its own copy of the catalogue/orders. With it, what the admin publishes is what every customer sees, and every order lands in the admin console.
+Without this step the site still works, but each browser keeps its own copy of the catalogue/orders. With it, what the admin publishes is what every customer sees, and every order lands in the admin console. Everything stays inside Cloudflare.
 
-1. https://console.firebase.google.com → **Add project** → name it `kavogrid` → (Analytics can be off) → Create.
-2. Left menu **Build → Firestore Database → Create database** → choose a region (e.g. `europe-west1`) → start in **production mode**.
-3. **Rules** tab → replace everything with the contents of `firestore.rules` from this repo → **Publish**.
-4. Project settings (gear icon) → **Your apps → Web app (`</>`)** → nickname `kavogrid.org` → Register. Copy the `firebaseConfig` object shown.
-5. Paste those values into `lib/firebase-config.js` (replace the `YOUR_…` placeholders), commit, push. Cloudflare redeploys.
-6. Optional social login: **Build → Authentication → Sign-in method** → enable Google (and Facebook/Twitter if wanted) → **Settings → Authorized domains** → add `kavogrid.org`.
+1. Cloudflare dashboard → left menu **Storage & Databases → D1 SQL Database** → **Create Database**.
+2. Name: `kavogrid`. Location: leave automatic → **Create**.
+3. On the database page copy the **Database ID** (a long code like `3f1c…-…`).
+4. In the repo open `wrangler.toml` and replace `PASTE_YOUR_D1_DATABASE_ID_HERE` with that ID. Commit + push. Cloudflare redeploys; the Worker creates the table itself on first use.
+5. Check: open https://kavogrid.org/api/health → should show `{"ok":true,"db":true}`.
+6. Open https://kavogrid.org/admin once — it uploads the existing catalogue to the database. From then on the database is the source of truth for every device.
 
-First time the admin console opens after this, it uploads the existing catalogue to the cloud; from then on the cloud is the source of truth for every device.
+**Optional lock (recommended once live):** Worker project → **Settings → Variables & Secrets → Add** → type **Secret**, name `ADMIN_TOKEN`, value = a long password of your choice → Save → redeploy. Then in the admin console open **Settings → Cloud sync** and enter the same password once per computer. Catalogue, hero media, rates and staff accounts can then only be changed by the admin; customers can still place orders.
 
 ## 4 · Email notifications (optional)
 
@@ -60,5 +60,6 @@ First time the admin console opens after this, it uploads the existing catalogue
 - `admin.html` — admin console (`/admin`)
 - `wrangler.toml`, `_redirects`, `_headers` — Cloudflare routing, caching and no-index for admin
 - `robots.txt`, `sitemap.xml` — search engines
-- `lib/firebase-config.js` — the ONE file you edit to switch on the database
-- `firestore.rules` — paste into Firebase
+- `worker.js` — sync API on Cloudflare D1 (`/api/sync`)
+- `lib/cloud-sync.js` — browser side of the sync
+- `lib/firebase-config.js` — optional, only for social customer login

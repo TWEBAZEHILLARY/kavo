@@ -264,7 +264,6 @@
      ───────────────────────────────────────────────────────────────────────── -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <!-- Shared Firebase config (single edit point for storefront + admin) -->
 <script src="lib/firebase-config.js"></script>
 
@@ -328,7 +327,7 @@
     if (e.key === 'pps_products' || e.key === 'pps_currency_rates' || e.key === 'pps_hero_media') location.reload();
   });
   // Cloud sync (lib/cloud-sync.js): when one of these keys is pulled from the
-  // admin's Firestore, reload so the storefront re-reads it. Orders are NOT
+  // Cloudflare D1 database, reload so the storefront re-reads it. Orders are NOT
   // listed — they're read fresh each time the Track Order modal opens.
   window.PPS_SYNC_RELOAD_KEYS = ['pps_products', 'pps_currency_rates', 'pps_hero_media'];
 </script>

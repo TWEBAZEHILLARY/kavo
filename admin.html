@@ -141,12 +141,9 @@
 <!-- EmailJS browser SDK — sends the password-reset email directly from the page (no backend). -->
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
-<!-- Firebase + cloud sync: mirrors admin-owned data (hero media, products,
-     rates, orders) to Cloud Firestore so the admin controls the storefront on
-     every computer/IP. Inert until lib/firebase-config.js is filled in. -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="lib/firebase-config.js"></script>
+<!-- Cloud sync: mirrors admin-owned data (hero media, products, rates,
+     orders, records) to the Cloudflare D1 database via /api/sync so the admin
+     controls the storefront on every computer/IP. -->
 <script src="lib/cloud-sync.js"></script>
 
 <!-- SheetJS — reads/writes the .xlsx bulk-product-import template. -->

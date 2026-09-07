@@ -1,11 +1,23 @@
-# Cloudflare Pages project config for kavogrid.org.
-# The site is 100% static: Pages serves this folder as-is (no build step).
-# Routing lives in _redirects, headers in _headers.
-# Custom domains (kavogrid.org + www) are attached in the Pages dashboard.
+# Cloudflare Worker config for kavogrid.org.
+# Deploy command in the Cloudflare project: npx wrangler deploy
+#   · worker.js serves the /api/* sync endpoints (Cloudflare D1 database)
+#   · everything else in the repo root is served as static assets;
+#     _redirects and _headers are honoured, so / -> index.html, /admin -> admin.html
 name = "kavo"
+main = "worker.js"
 compatibility_date = "2026-06-25"
 
 [assets]
 directory = "."
+binding = "ASSETS"
 not_found_handling = "404-page"
-html_handling = "drop-trailing-slash"
+html_handling = "auto-trailing-slash"
+run_worker_first = ["/api/*"]
+
+# ── Database ──
+# Create it in the dashboard: Storage & Databases → D1 → Create → name "kavogrid",
+# then paste its Database ID below (see DEPLOY.md, section 3).
+[[d1_databases]]
+binding = "DB"
+database_name = "kavogrid"
+database_id = "91d166f6-f497-4366-b09e-dade22554562"

@@ -233,7 +233,39 @@
         </div>
 
         <HeroMediaCard />
+        <CloudSyncCard />
       </div>
+    );
+  }
+
+  function CloudSyncCard() {
+    const [status, setStatus] = React.useState('checking');
+    const [token, setToken] = React.useState(() => localStorage.getItem('pps_sync_token') || '');
+    const [needsToken, setNeedsToken] = React.useState(false);
+    React.useEffect(() => {
+      fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()).then((d) => setStatus(d.db ? 'on' : 'nodb')).catch(() => setStatus('off'));
+      const h = () => setNeedsToken(true);
+      window.addEventListener('pps-sync-unauthorized', h);
+      return () => window.removeEventListener('pps-sync-unauthorized', h);
+    }, []);
+    const saveToken = () => { if (token.trim()) localStorage.setItem('pps_sync_token', token.trim()); else localStorage.removeItem('pps_sync_token'); setNeedsToken(false); };
+    const msg = status === 'on' ? 'Connected — changes here reach kavogrid.org on every device.' : status === 'nodb' ? 'Database not linked yet. Set the D1 database ID in wrangler.toml (see DEPLOY.md §3).' : status === 'off' ? 'Not reachable — this browser keeps its own copy only.' : 'Checking…';
+    const dot = status === 'on' ? T.green : status === 'checking' ? T.sub : T.red;
+    return (
+      <Card style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 11, background: T.blueWash, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name="shield" size={22} color={T.blue} stroke={2} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>Cloud sync</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.sub, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 8, height: 8, borderRadius: 99, background: dot, flexShrink: 0 }}></span>{msg}</div>
+          </div>
+        </div>
+        {needsToken && <div style={{ marginTop: 14, padding: '10px 13px', background: T.redWash, color: T.red, borderRadius: 11, fontSize: 12.5, fontWeight: 700 }}>The database refused a change: enter the admin sync password below.</div>}
+        <div style={{ display: 'flex', gap: 11, marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Admin sync password (only if ADMIN_TOKEN is set in Cloudflare)" style={{ flex: 1, minWidth: 240, height: 42, padding: '0 13px', borderRadius: 11, border: `1px solid ${T.line}`, fontSize: 13.5, fontWeight: 600, color: T.ink, outline: 'none', fontFamily: 'inherit' }} />
+          <Button variant="primary" icon="check" onClick={saveToken}>Save on this computer</Button>
+        </div>
+      </Card>
     );
   }
 

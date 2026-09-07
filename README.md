@@ -13,4 +13,4 @@ Shared code: `lib/` (data layer, commerce, brand, cloud sync), `screens/home-a.j
 
 ## How the admin controls the storefront
 Both pages read/write the same data keys (`pps_products`, `pps_hero_media`, `pps_currency_rates`, `pps_orders`, …).
-`lib/cloud-sync.js` mirrors those keys to Cloud Firestore so a change made in the admin console appears on every visitor's device, and every customer order/inquiry reaches the admin. It activates as soon as `lib/firebase-config.js` is filled in.
+`lib/cloud-sync.js` mirrors those keys to a Cloudflare D1 database through `worker.js` (`/api/sync`) so a change made in the admin console appears on every visitor's device, and every customer order/inquiry reaches the admin. Set the D1 database ID in `wrangler.toml` (DEPLOY.md §3).

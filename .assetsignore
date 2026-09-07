@@ -3,6 +3,7 @@
 .gitignore
 node_modules
 wrangler.toml
+worker.js
 DEPLOY.md
 README.md
 github.md
