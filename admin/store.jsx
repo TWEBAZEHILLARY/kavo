@@ -1,4 +1,4 @@
-// store.jsx — Cavort admin data layer.
+// store.jsx — KAVO admin data layer.
 // Single source of truth: localStorage. The storefront (home.html) is meant to
 // read pps_products from the same place (see reference snippet in admin.html).
 // Purely additive — does not touch the existing storefront code.
@@ -175,7 +175,7 @@
       id: 'lgt' + (i + 1), sku, brand: 'Tronic', icon: 'light', name, category: 'Lighting',
       regularPrice: _mk(orig), salePrice: null, stock, tags: [], featured: false, rating: 4.5, reviews: 0,
       specs: `Type: Indoor LED Light\nMount: ${mount}\nVoltage: 220–240V`,
-      description: `${name} — indoor LED ${mount.toLowerCase()} fitting supplied by Cavort.`,
+      description: `${name} — indoor LED ${mount.toLowerCase()} fitting supplied by KAVO.`,
       image,
     };
   });
@@ -191,8 +191,8 @@
         ? `Rating: ${amps}A\nPoles: ${poles}\nType: Isolator / Disconnector\nVoltage: 415V`
         : `Rating: ${amps}A\nPoles: ${poles}\nBreaking: 6kA\nCurve: C`,
       description: iso
-        ? `${name} — load-breaking isolator/disconnector for safe circuit isolation, supplied by Cavort.`
-        : `${name} — miniature circuit breaker for overload and short-circuit protection, supplied by Cavort.`,
+        ? `${name} — load-breaking isolator/disconnector for safe circuit isolation, supplied by KAVO.`
+        : `${name} — miniature circuit breaker for overload and short-circuit protection, supplied by KAVO.`,
       image,
     };
   });

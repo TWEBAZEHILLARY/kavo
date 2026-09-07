@@ -1,7 +1,11 @@
-# Cloudflare Pages project config for kavogrid.org.
-# The site is 100% static: Pages serves this folder as-is (no build step).
-# Routing lives in _redirects, headers in _headers.
-# Custom domains (kavogrid.org + www) are attached in the Pages dashboard.
-name = "kavogrid"
+# Cloudflare Workers (static assets) config for kavogrid.org.
+# Deploy command in the Cloudflare project: npx wrangler deploy
+# The repo root is uploaded as static assets. html_handling serves
+# index.html at "/" and admin.html at "/admin" (no trailing slash).
+name = "kavo"
 compatibility_date = "2026-06-25"
-pages_build_output_dir = "."
+
+[assets]
+directory = "."
+not_found_handling = "404-page"
+html_handling = "drop-trailing-slash"

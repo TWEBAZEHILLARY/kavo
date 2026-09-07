@@ -188,7 +188,7 @@
             <li>Prices are quoted in ${esc((CURRENCIES[q.currency] || {}).code || q.currency)} and are ${t.mode === 'inclusive' ? 'inclusive of VAT' : 'exclusive of VAT unless stated in the totals'}.</li>
             <li>Delivery lead time confirmed on receipt of a purchase order and applicable deposit.</li>
             <li>Goods remain the property of ${esc(COMPANY.name)} until paid in full.</li>
-            <li>Warranty per manufacturer terms; claims handled through Cavort.</li>
+            <li>Warranty per manufacturer terms; claims handled through KAVO.</li>
           </ol>
         </div>
         <div class="pq-totals">

@@ -212,7 +212,7 @@ function loadProducts() {
           const stock = isNaN(n) ? (p.stock || 'In stock') : (n > 5 ? 'In stock' : n > 0 ? 'Low stock' : 'Out of stock');
           return {
             ...p, ugx, was, cat: ((p.cat || p.category) === 'Automation' ? 'Tech' : (p.cat || p.category)), icon: p.icon || 'box',
-            brand: p.brand || 'Cavort', rating: p.rating || 4.5, reviews: p.reviews || 0,
+            brand: p.brand || 'KAVO', rating: p.rating || 4.5, reviews: p.reviews || 0,
             badge: p.badge || (p.tags && p.tags[0]) || null, spec, stock,
           };
         });

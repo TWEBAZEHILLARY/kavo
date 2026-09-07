@@ -1108,7 +1108,7 @@
             <div style={{ position: 'relative', zIndex: 1 }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(255,176,32,.2)', color: T.amber, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, padding: '5px 11px', borderRadius: 999, textTransform: 'uppercase', marginBottom: 16 }}>Authorised distributor · Since 2009</span>
               <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: -0.7, lineHeight: 1.14, maxWidth: 560 }}>Powering Uganda's projects with genuine components.</div>
-              <div style={{ fontSize: 15, color: 'rgba(255,255,255,.82)', margin: '14px 0 0', maxWidth: 600, lineHeight: 1.6 }}>Cavort is Uganda's electrical supply marketplace — stocking authorised ABB, Schneider, Siemens and more for industrial, mechanical and domestic projects. From a single breaker to a full panel build, our engineers and sourcing desk keep your job moving with same-day Kampala dispatch and quotes in UGX, USD or EUR.</div>
+              <div style={{ fontSize: 15, color: 'rgba(255,255,255,.82)', margin: '14px 0 0', maxWidth: 600, lineHeight: 1.6 }}>KAVO is Uganda's electrical supply marketplace — stocking authorised ABB, Schneider, Siemens and more for industrial, mechanical and domestic projects. From a single breaker to a full panel build, our engineers and sourcing desk keep your job moving with same-day Kampala dispatch and quotes in UGX, USD or EUR.</div>
             </div>
           </div>
 
@@ -1175,15 +1175,15 @@
 
   // ── Terms & Conditions modal ──
   const TERMS = [
-    { h: '1. Introduction', b: ['Welcome to Cavort. These Terms and Conditions govern your use of our website and the purchase of products from our online store. By using our website and placing an order, you agree to be bound by these terms.'] },
-    { h: '2. Definitions', b: ['"Company", "We", "Us", "Our" — refers to Cavort.', '"Customer", "You", "Your" — refers to the user of our website and purchaser of goods.', '"Goods" — refers to the products advertised on our website.', '"Website" — refers to the Cavort online store.'] },
+    { h: '1. Introduction', b: ['Welcome to KAVO. These Terms and Conditions govern your use of our website and the purchase of products from our online store. By using our website and placing an order, you agree to be bound by these terms.'] },
+    { h: '2. Definitions', b: ['"Company", "We", "Us", "Our" — refers to KAVO.', '"Customer", "You", "Your" — refers to the user of our website and purchaser of goods.', '"Goods" — refers to the products advertised on our website.', '"Website" — refers to the KAVO online store.'] },
     { h: '3. Eligibility', b: ['By using our website and placing an order, you confirm that you are at least 18 years old and legally capable of entering into binding contracts.'] },
     { h: '4. Account Registration', b: ['You may be required to create an account to place orders.', 'You are responsible for maintaining the confidentiality of your account credentials.', 'You agree to provide accurate, complete, and up-to-date information.', 'We reserve the right to suspend or terminate accounts that violate these terms.'] },
     { h: '5. Orders and Pricing', b: ['All orders are subject to acceptance and availability.', 'Prices are listed in the currency selected at checkout and are inclusive of applicable taxes unless stated otherwise.', 'We reserve the right to modify prices at any time without prior notice.', 'Once an order is placed, you will receive an order confirmation via email.', 'We reserve the right to cancel or refuse any order at our discretion.'] },
     { h: '6. Payment Terms', b: ['We accept payments via MoMo, credit/debit cards, and trade terms as displayed on our website.', 'Payment must be made in full before goods are dispatched.', 'You agree to provide valid payment details and authorize us to charge the total order amount.'] },
     { h: '7. Shipping and Delivery', b: ['Delivery timelines will be confirmed upon order placement.', 'We ship to the address provided by you during checkout.', 'Risk of loss or damage to goods passes to you upon delivery.', 'We are not liable for delays caused by circumstances beyond our reasonable control.'] },
     { h: '8. Returns and Refunds', b: ['If you are not satisfied with your purchase, please contact us within 14 days of receipt.', 'Goods must be returned in their original condition and packaging.', 'Refunds will be processed using the original payment method.', 'Custom or special-order items may not be eligible for return.'] },
-    { h: '9. Intellectual Property', b: ['All content on our website, including logos, text, images, and designs, is the property of Cavort.', 'You may not reproduce, distribute, or use any content without our prior written consent.'] },
+    { h: '9. Intellectual Property', b: ['All content on our website, including logos, text, images, and designs, is the property of KAVO.', 'You may not reproduce, distribute, or use any content without our prior written consent.'] },
     { h: '10. User Conduct', b: ['You agree to use our website for lawful purposes only.', 'You shall not upload or transmit viruses or malicious code; engage in fraudulent or deceptive activities; attempt to gain unauthorized access to our systems; or harass, abuse, or harm others.'] },
     { h: '11. Limitation of Liability', b: ['To the fullest extent permitted by law, we shall not be liable for any indirect, incidental, or consequential damages.', 'Our total liability for any claim arising from your use of our website or purchase of goods shall not exceed the total amount paid by you for the goods.'] },
     { h: '12. Disclaimer of Warranties', b: ['Our goods are provided "as is" without warranties of any kind, either express or implied.', 'We do not warrant that our website will be uninterrupted or error-free.'] },
@@ -1195,9 +1195,9 @@
   function TermsModal() {
     return (
       <Overlay width={800} onClose={() => ModalStore.close()}>
-        <ModalHead title="Terms & Conditions" sub="Cavort · Last updated June 2026" onClose={() => ModalStore.close()} />
+        <ModalHead title="Terms & Conditions" sub="KAVO · Last updated June 2026" onClose={() => ModalStore.close()} />
         <div className="terms-content" style={{ flex: '1 1 auto', overflowY: 'auto', padding: '24px 28px 28px', background: T.surface }}>
-          <p style={{ margin: '0 0 22px', fontWeight: 700 }}>Welcome to Cavort. Please read these Terms &amp; Conditions carefully before using our website or placing an order.</p>
+          <p style={{ margin: '0 0 22px', fontWeight: 700 }}>Welcome to KAVO. Please read these Terms &amp; Conditions carefully before using our website or placing an order.</p>
           {TERMS.map((s) => (
             <div key={s.h} style={{ marginBottom: 22 }}>
               <div style={{ fontWeight: 700, fontSize: 15, color: T.ink, marginBottom: 8 }}>{s.h}</div>
@@ -1222,7 +1222,7 @@
   // administrator verifies them; pay-on-delivery orders go straight to
   // awaiting arrival.
   const ugxFmt = (n) => 'USh ' + Math.round(n || 0).toLocaleString('en-US');
-  const MERCHANT = 'Cavort';
+  const MERCHANT = 'KAVO';
   const PAY_TO_NUMBER = '+256764250125';
   const termOf = (p) => (p && p.payment_terms) || 'Advance Payment';
 

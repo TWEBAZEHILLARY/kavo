@@ -224,7 +224,7 @@
 
     const email = () => {
       const to = quote.client.email || '';
-      openLink(`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent('Quotation ' + quote.number + ' — Cavort')}&body=${encodeURIComponent('Dear ' + (quote.client.company || 'Customer') + ',\n\n' + summary + '\n\nKind regards,\n' + quote.issuedBy + '\nKavo Grid (U) Ltd.')}`);
+      openLink(`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent('Quotation ' + quote.number + ' — KAVO')}&body=${encodeURIComponent('Dear ' + (quote.client.company || 'Customer') + ',\n\n' + summary + '\n\nKind regards,\n' + quote.issuedBy + '\nKavo Grid (U) Ltd.')}`);
       markSent('Email');
     };
     const whatsapp = () => {

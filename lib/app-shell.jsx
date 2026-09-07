@@ -47,14 +47,14 @@
     const close = () => { setShow(false); try { localStorage.setItem('pps_app_install_dismissed', '1'); } catch (e) {} };
     const install = () => {
       if (evt) { evt.prompt(); close(); return; }
-      ToastStore.push('Tap Share in Safari, then "Add to Home Screen".', { title: 'Install Cavort', icon: 'download' });
+      ToastStore.push('Tap Share in Safari, then "Add to Home Screen".', { title: 'Install KAVO', icon: 'download' });
     };
     return (
       <div id="app-install" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
         background: T.ink, color: '#fff', fontFamily: F }}>
         <img src="images/brand/app-icon-192.png" alt="" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 800 }}>Install the Cavort app</div>
+          <div style={{ fontSize: 13, fontWeight: 800 }}>Install the KAVO app</div>
           <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,.7)' }}>{ios ? 'Share → Add to Home Screen' : 'Works offline · full screen'}</div>
         </div>
         <button onClick={install} style={{ border: 'none', background: T.blue, color: '#fff', padding: '9px 15px', borderRadius: 9,
@@ -85,7 +85,7 @@
           padding: '13px 16px calc(78px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', gap: 10 }}>
           <Icon name="rotate" size={15} color={T.sub} />
           <span style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, flex: 1, lineHeight: 1.4 }}>
-            Catalogue, pricing and hero media sync live from the Cavort admin console.
+            Catalogue, pricing and hero media sync live from the KAVO admin console.
           </span>
           <a href="/admin" style={{ fontSize: 11.5, fontWeight: 800, color: T.blue, textDecoration: 'none', whiteSpace: 'nowrap' }}>Admin →</a>
         </div>

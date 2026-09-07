@@ -1,4 +1,4 @@
-// sw.js — minimal offline shell for the Cavort app.
+// sw.js — minimal offline shell for the KAVO app.
 // Network-first for same-origin GETs (so admin-published changes always win),
 // with a cache fallback so the app still opens without a connection.
 const CACHE = 'kavogrid-v2';

@@ -3,6 +3,10 @@
 .gitignore
 node_modules
 wrangler.toml
+DEPLOY.md
+README.md
+github.md
+firestore.rules
 .assetsignore
 screenshots
 .thumbnail

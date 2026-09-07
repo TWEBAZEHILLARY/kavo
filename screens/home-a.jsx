@@ -444,14 +444,14 @@
               ['Company', [
                 ['About', () => ModalStore.open('about')],
                 ['Contact', () => ModalStore.open('about', { scrollTo: 'contact' })],
-                ['Careers', () => ToastStore.push("We're always looking for talented people — send your CV to cavortug@gmail.com.", { title: 'Careers at Cavort', icon: 'user', tone: 'info' })],
+                ['Careers', () => ToastStore.push("We're always looking for talented people — send your CV to kavogrid@gmail.com.", { title: 'Careers at KAVO', icon: 'user', tone: 'info' })],
               ]],
             ].map(([h, items]) => (
               <div key={h}><div style={{ fontSize: 14, fontWeight: 800, color: '#fff', marginBottom: 12 }}>{h}</div>
                 {items.map(([label, onClick]) => <FooterLink key={label} label={label} onClick={onClick} />)}</div>))}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 20, fontSize: 13 }}>
-            <span>© 2026 Cavort (U) Ltd. All prices incl. VAT.</span>
+            <span>© 2026 KAVO (U) Ltd. All prices incl. VAT.</span>
             <span style={{ display: 'flex', gap: 10 }}>{['MTN MoMo', 'Airtel', 'Visa', 'Mastercard', 'PayPal'].map((p) => <span key={p} style={{ background: 'rgba(255,255,255,.1)', padding: '5px 11px', borderRadius: 7, fontSize: 12, fontWeight: 700, color: '#fff' }}>{p}</span>)}</span>
           </div>
         </div>

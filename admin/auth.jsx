@@ -404,10 +404,10 @@
               <Icon name="lock" size={13} color="#FFB020" stroke={2.2} />SECURE ADMIN ACCESS
             </div>
             <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.08, fontWeight: 800, color: '#fff', letterSpacing: -1 }}>Run the catalogue,<br />orders, quotes &amp;<br />team from one console.</h1>
-            <p style={{ margin: '18px 0 0', fontSize: 15.5, lineHeight: 1.6, color: 'rgba(255,255,255,.66)', fontWeight: 500, maxWidth: 420 }}>Manage products, build quotations, fulfil orders and your staff accounts — every change publishes straight to the Cavort storefront.</p>
+            <p style={{ margin: '18px 0 0', fontSize: 15.5, lineHeight: 1.6, color: 'rgba(255,255,255,.66)', fontWeight: 500, maxWidth: 420 }}>Manage products, build quotations, fulfil orders and your staff accounts — every change publishes straight to the KAVO storefront.</p>
           </div>
           <div style={{ position: 'relative', display: 'flex', gap: 26, color: 'rgba(255,255,255,.5)', fontSize: 12.5, fontWeight: 700 }}>
-            <span>© 2026 Cavort</span>
+            <span>© 2026 KAVO</span>
           </div>
         </div>
 
@@ -416,7 +416,7 @@
           <form onSubmit={submit} style={{ width: '100%', maxWidth: 360 }}>
             <div className="pps-login-mark" style={{ display: 'none', marginBottom: 26 }}><window.PPSLogo size={30} /></div>
             <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: T.ink, letterSpacing: -0.6 }}>Sign in to Admin</h2>
-            <p style={{ margin: '7px 0 28px', fontSize: 14, color: T.sub, fontWeight: 600 }}>Cavort Admin Console</p>
+            <p style={{ margin: '7px 0 28px', fontSize: 14, color: T.sub, fontWeight: 600 }}>KAVO Admin Console</p>
 
             {error && (
               <div style={{ marginBottom: 18 }}>

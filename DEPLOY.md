@@ -20,14 +20,13 @@ git push -u origin main
 
 If the repo already has a commit and the push is rejected, use `git push -u origin main --force` (the repo is currently empty, so this is safe).
 
-## 2 · Cloudflare Pages
+## 2 · Cloudflare Workers (static assets)
 
-1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git**.
-2. Pick **TWEBAZEHILLARY/kavo**, branch `main`.
-3. Build settings: Framework preset **None**, Build command **(leave empty)**, Build output directory **`/`** (a single slash — the repo root).
-4. **Save and Deploy**. You get a `kavogrid.pages.dev` preview URL.
-5. In the Pages project → **Custom domains → Set up a custom domain** → `kavogrid.org` → Activate.
-   Repeat for `www.kavogrid.org`. Because the domain is already on Cloudflare, the DNS records are created for you.
+1. Cloudflare dashboard → **Workers & Pages → Create → Import a repository** → pick **TWEBAZEHILLARY/kavo**, branch `main`.
+2. Build command: **(leave empty)**. Deploy command: `npx wrangler deploy` (wrangler.toml uploads the repo root as static assets).
+3. **Save and Deploy**. You get a `kavogrid.<account>.workers.dev` preview URL.
+4. Project → **Settings → Domains & Routes → Add → Custom domain** → `kavogrid.org`. Repeat for `www.kavogrid.org`.
+   Because the domain is already on Cloudflare, the DNS records are created for you.
 6. Wait for the certificate (usually under 5 minutes). Then:
    - `https://kavogrid.org` → storefront
    - `https://kavogrid.org/admin` → admin console
@@ -59,7 +58,7 @@ First time the admin console opens after this, it uploads the existing catalogue
 ### File map
 - `index.html` — storefront (`/`)
 - `admin.html` — admin console (`/admin`)
-- `_redirects`, `_headers` — Cloudflare Pages routing, caching and no-index for admin
+- `wrangler.toml`, `_redirects`, `_headers` — Cloudflare routing, caching and no-index for admin
 - `robots.txt`, `sitemap.xml` — search engines
 - `lib/firebase-config.js` — the ONE file you edit to switch on the database
 - `firestore.rules` — paste into Firebase

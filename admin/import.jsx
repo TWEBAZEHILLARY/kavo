@@ -66,7 +66,7 @@
     const X = window.XLSX;
     if (!X) {
       const rows = [COLS.map((c) => c.head), ...SAMPLE.map((r) => COLS.map((c) => r[c.key]))];
-      downloadBlob(new Blob(['\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), `Cavort-Product-Import-Template-${stamp}.csv`);
+      downloadBlob(new Blob(['\uFEFF' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), `KAVO-Product-Import-Template-${stamp}.csv`);
       return 'csv';
     }
     const wb = X.utils.book_new();
@@ -78,12 +78,12 @@
     ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: COLS.length - 1 } }) };
     COLS.forEach((c, i) => {
       const ref = X.utils.encode_cell({ r: 0, c: i });
-      if (ws[ref]) ws[ref].c = [{ a: 'Cavort', t: c.note }];
+      if (ws[ref]) ws[ref].c = [{ a: 'KAVO', t: c.note }];
     });
     X.utils.book_append_sheet(wb, ws, 'Products');
 
     const guide = [
-      ['CAVORT · PRODUCT IMPORT TEMPLATE'],
+      ['KAVO · PRODUCT IMPORT TEMPLATE'],
       ['Fill in the "Products" sheet — one product per row. Columns marked * are required.'],
       ['Delete the two example rows before you upload. Prices are plain numbers in UGX (no commas, no "UGX").'],
       [],
@@ -100,7 +100,7 @@
     wsG['!cols'] = [{ wch: 30 }, { wch: 12 }, { wch: 82 }];
     X.utils.book_append_sheet(wb, wsG, 'Instructions');
 
-    X.writeFile(wb, `Cavort-Product-Import-Template-${stamp}.xlsx`);
+    X.writeFile(wb, `KAVO-Product-Import-Template-${stamp}.xlsx`);
     return 'xlsx';
   }
 
@@ -234,7 +234,7 @@
 
     const download = () => {
       const kind = buildTemplate();
-      ToastStore.push(kind === 'xlsx' ? 'Cavort-Product-Import-Template.xlsx downloaded — fill in the Products sheet.' : 'CSV template downloaded — Excel opens it directly.', { title: 'Template ready', icon: 'download', tone: 'ok' });
+      ToastStore.push(kind === 'xlsx' ? 'KAVO-Product-Import-Template.xlsx downloaded — fill in the Products sheet.' : 'CSV template downloaded — Excel opens it directly.', { title: 'Template ready', icon: 'download', tone: 'ok' });
     };
 
     const box = { border: `1px solid ${T.line}`, borderRadius: 14, padding: 16, background: '#fff' };
