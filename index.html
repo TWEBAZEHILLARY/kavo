@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -93,162 +94,119 @@
     .rcpt { padding: 0; max-width: none; }
   }
 </style>
-<!-- ─────────────────────────────────────────────────────────────────────────
-     RESPONSIVE OVERRIDES (appended — desktop ≥1200px is completely untouched).
-
-     This page renders with inline React styles, so there are no .container /
-     .hero class hooks and a normal stylesheet cannot override inline styles.
-     These rules therefore target the structural containers by their inline-
-     style *fingerprints* (substring matches on the serialized `style` attr)
-     and use !important to win the cascade against inline styles. Everything is
-     scoped under #root so the print receipt (#pps-receipt-root) is never
-     affected. No colors, fonts, HTML or JS are changed — only sizing, spacing
-     and stacking at small viewports.
-     ───────────────────────────────────────────────────────────────────────── -->
+<!-- Homepage responsive layout. Desktop (≥1200px) is untouched. Layout hooks are
+     the ka-* classNames in screens/home-a.jsx; !important is needed because the
+     page renders with inline React styles. Scoped to #root so the print receipt
+     and every other page are unaffected. Modal rules (bottom) target inline-style
+     fingerprints because modals live in lib/commerce.jsx. -->
 <style id="pps-responsive">
-  /* Never let a too-wide inline width force a horizontal scrollbar. */
-  @media (max-width: 1199px) { html, body { overflow-x: hidden; } }
+  /* ── Focus visibility (keyboard) ── */
+  #root .ka-drawer-item:focus-visible, #root .ka-cat-btn:focus-visible, #root .ka-rare:focus-visible, #root .ka-action:focus-visible,
+  #root .ka-topbar-help:focus-visible, #root .ka-search-btn:focus-visible, #root .ka-hero-ctas button:focus-visible { outline: 3px solid #FFB020 !important; outline-offset: 2px; }
+  #root .ka-drawer-item:focus-visible { outline-offset: -3px; }
+  #root .ka-search-input { min-width: 0; text-overflow: ellipsis; }
 
-  /* ═══════════ ≤1199px — large tablets / small desktops: trim side gutters ═══════════ */
+  /* ═══ ≤1199px — trim side gutters ═══ */
   @media (max-width: 1199px) {
-    #root [style*="padding: 0 40px"],
-    #root [style*="padding: 24px 40px 0"],
-    #root [style*="padding: 22px 40px 0"],
-    #root [style*="padding: 30px 40px 0"],
-    #root [style*="padding: 34px 40px 0"],
-    #root [style*="padding: 40px 40px 28px"] { padding-left: 28px !important; padding-right: 28px !important; }
+    #root .ka-gut { padding-left: 28px !important; padding-right: 28px !important; }
   }
 
-  /* ═══════════ ≤991px — tablets (portrait & landscape): begin stacking ═══════════ */
+  /* ═══ ≤991px — tablets: hide category rail (drawer takes over), stack big grids ═══ */
   @media (max-width: 991px) {
-    /* hero: category rail / banner / RFQ-card 3-col → single column */
-    #root [style*="grid-template-columns: 236px 1fr 300px"] { grid-template-columns: 1fr !important; }
-    /* trust strip 4-up → 2-up */
-    #root [style*="repeat(4"] { grid-template-columns: 1fr 1fr !important; }
-    /* RFQ banner 1.4fr|1fr → stack (also matches footer; footer re-set below) */
-    #root [style*="grid-template-columns: 1.4fr 1fr"] { grid-template-columns: 1fr !important; }
-    /* footer columns → 2-up */
-    #root [style*="grid-template-columns: 1.4fr 1fr 1fr 1fr"] { grid-template-columns: 1fr 1fr !important; }
-    /* distributor logos 6-up → 3-up */
-    #root [style*="repeat(6"] { grid-template-columns: repeat(3, 1fr) !important; }
-    /* product-details hero 420px|1fr → stack */
-    #root [style*="grid-template-columns: 420px 1fr"] { grid-template-columns: 1fr !important; }
-    /* hero headline scales down */
-    #root [style*="font-size: 42px"] { font-size: 32px !important; }
+    #root .ka-sidebar { display: none !important; }
+    #root .ka-hero { grid-template-columns: 1fr !important; }
+    #root .ka-banner { padding: 36px 32px !important; min-height: 0 !important; }
+    #root .ka-hero-h1 { font-size: 42px !important; letter-spacing: -1px !important; }
+    #root .ka-trust { grid-template-columns: 1fr 1fr !important; }
+    #root .ka-rfq { grid-template-columns: 1fr !important; }
+    #root .ka-rfq-steps { border-left: none !important; border-top: 1px solid rgba(255,255,255,.12) !important; padding: 26px 32px !important; }
+    #root .ka-brands { grid-template-columns: repeat(3, 1fr) !important; }
+    #root .ka-footer-grid { grid-template-columns: 1fr 1fr !important; }
+    #root .ka-cat-btn { min-height: 44px; }
+    #root .ka-rare { min-height: 44px; }
+    /* header: search drops to its own row so logo + account/cart never clip */
+    #root .ka-header-row { height: auto !important; flex-wrap: wrap !important; gap: 10px 12px !important; padding: 12px 0 !important; align-items: center !important; }
+    #root .ka-logo { order: 1; display: flex; align-items: center; min-height: 44px; }
+    #root .ka-actions { order: 2; margin-left: auto; }
+    #root .ka-action-label { white-space: nowrap; }
+    #root .ka-search { order: 3; flex: 1 1 100% !important; min-width: 0; }
+    #root .ka-hero-ctas button, #root .ka-rfq-ctas button { white-space: nowrap; }
   }
 
-  /* ═══════════ ≤767px — large phones / small tablets: major stacking, full-width ═══════════ */
+  /* ═══ ≤767px — phones & small tablets ═══ */
   @media (max-width: 767px) {
-    /* tighter gutters */
-    #root [style*="padding: 0 40px"],
-    #root [style*="padding: 24px 40px 0"],
-    #root [style*="padding: 22px 40px 0"],
-    #root [style*="padding: 30px 40px 0"],
-    #root [style*="padding: 34px 40px 0"],
-    #root [style*="padding: 40px 40px 28px"] { padding-left: 16px !important; padding-right: 16px !important; }
+    #root .ka-gut { padding-left: 16px !important; padding-right: 16px !important; }
 
-    /* top utility bar wraps instead of squeezing */
-    #root [style*="height: 42px"] { height: auto !important; flex-wrap: wrap !important; gap: 6px 14px !important; padding: 8px 16px !important; }
+    /* 1 · announcement bar: message wraps on its own line, tools in a second row */
+    #root .ka-topbar-row { height: auto !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding-top: 9px !important; padding-bottom: 9px !important; }
+    #root .ka-topbar-msg { display: block !important; flex: 1 1 100% !important; line-height: 1.45; }
+    #root .ka-topbar-msg > svg { vertical-align: -3px; margin-right: 4px; }
+    #root .ka-topbar-tools { flex: 1 1 100% !important; justify-content: space-between !important; gap: 10px 14px !important; flex-wrap: wrap !important; }
+    #root .ka-topbar-help { padding: 8px 6px; margin: -8px -6px; }
 
-    /* header row wraps; search bar drops to its own full-width line */
-    #root [style*="height: 78px"] { height: auto !important; flex-wrap: wrap !important; padding: 12px 0 !important; gap: 14px !important; }
-    #root [style*="flex: 1; position: relative"] { flex: 1 1 100% !important; order: 3 !important; }
-    /* tighten the account/cart action cluster so it fits beside the logo */
-    #root [style*="gap: 22px"] { gap: 12px !important; }
+    /* 2 · header: logo left, icon controls right, search on its own full row */
+    #root .ka-header-row { padding: 10px 0 12px !important; }
+    #root .ka-actions { gap: 2px !important; }
+    #root .ka-action { min-width: 44px; min-height: 44px; justify-content: center; padding: 0 !important; border-radius: 10px; }
+    #root .ka-action-label { display: none !important; }
+    #root .ka-search-bar { height: 48px !important; }
+    #root .ka-search-cat { padding: 0 12px !important; flex-shrink: 0; }
+    #root .ka-search-input { flex: 1 1 0 !important; padding: 0 10px !important; font-size: 15px !important; }
+    #root .ka-search-extra { padding: 0 10px !important; gap: 10px !important; flex-shrink: 0; }
+    #root .ka-search-btn { padding: 0 16px !important; flex-shrink: 0; min-width: 48px; justify-content: center; }
 
-    /* every 2-up grid (forms, reviews, trust) → single column */
-    #root [style*="repeat(4"] { grid-template-columns: 1fr !important; }
-    #root [style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
-    #root [style*="grid-template-columns: 1.4fr 1fr 1fr 1fr"] { grid-template-columns: 1fr !important; }
-    #root [style*="repeat(3"] { grid-template-columns: 1fr !important; }
+    /* 3 · category control + Source a Rare Part: side by side when they fit, else stacked */
+    #root .ka-nav { height: auto !important; flex-wrap: wrap !important; gap: 10px !important; padding: 0 0 12px !important; }
+    #root .ka-nav-spacer { display: none !important; }
+    #root .ka-cat-btn, #root .ka-rare { flex: 1 1 auto !important; justify-content: center !important; min-height: 44px; white-space: nowrap; }
 
-    /* large headings scale for readability */
-    #root [style*="font-size: 42px"] { font-size: 26px !important; letter-spacing: -0.5px !important; }
-    #root [style*="font-size: 32px"] { font-size: 24px !important; }
-    #root [style*="font-size: 28px"] { font-size: 22px !important; }
+    /* 4 · hero: full width, content-driven height, readable text */
+    #root .ka-hero { padding-top: 16px !important; }
+    #root .ka-banner { padding: 30px 22px !important; justify-content: flex-end !important; }
+    #root .ka-banner > div[aria-hidden][style*="rgba(0,0,0,.4)"] { background: linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.6)) !important; }
+    #root .ka-banner-deco { display: none !important; }
+    #root .ka-banner > span { white-space: nowrap; }
+    #root .ka-hero-h1 { font-size: clamp(28px, 8.5vw, 36px) !important; line-height: 1.12 !important; letter-spacing: -0.6px !important; text-wrap: balance; }
+    #root .ka-hero-sub { font-size: 15.5px !important; margin: 12px 0 22px !important; color: rgba(255,255,255,.92) !important; }
+    #root .ka-hero-ctas { flex-wrap: wrap !important; }
+    #root .ka-hero-ctas button { flex: 1 1 auto; min-height: 48px; padding: 13px 20px !important; }
 
-    /* roomy section paddings tighten */
-    #root [style*="padding: 44px 48px"] { padding: 28px 22px !important; }
-    #root [style*="padding: 40px 44px"] { padding: 28px 22px !important; }
+    /* 5 · content below the hero */
+    #root .ka-flash-head { flex-wrap: wrap !important; gap: 12px 16px !important; padding: 16px 16px !important; }
+    #root .ka-flash-body { padding: 14px !important; }
+    #root .ka-rfq-main { padding: 28px 22px !important; }
+    #root .ka-rfq-main > div[style*="font-size: 32px"] { font-size: 26px !important; letter-spacing: -0.5px !important; }
+    #root .ka-rfq-ctas { flex-wrap: wrap !important; }
+    #root .ka-rfq-ctas button { flex: 1 1 auto; min-height: 44px; }
+    #root .ka-rfq-steps { padding: 22px 22px !important; }
+    #root .ka-footer-bottom { flex-wrap: wrap !important; gap: 14px !important; align-items: flex-start !important; }
+    #root .ka-pay { flex-wrap: wrap !important; }
+    #root .ka-drawer { width: min(340px, 86vw) !important; }
 
-    /* product-details gallery image not too tall on phones */
+    /* modals (lib/commerce.jsx): full-bleed with small inset, usable height */
+    #root [style*="grid-template-columns: 1fr 1fr"]:not(.ka-trust):not(.ka-footer-grid) { grid-template-columns: 1fr !important; }
+    #root [style*="grid-template-columns: 420px 1fr"] { grid-template-columns: 1fr !important; }
     #root [style*="height: 360px"] { height: 240px !important; }
-
-    /* modals: full-bleed with small inset, more usable height */
     #root [style*="padding: 48px 20px"] { padding: 14px 8px !important; }
     #root [style*="100vh - 96px"] { max-height: calc(100vh - 28px) !important; }
-    /* catalogue grid: smaller min so 2 cols still fit a phone */
-    #root [style*="minmax(196px, 1fr)"] { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; }
-
-    /* footer bottom row + payment chips wrap instead of overflowing */
-    #root [style*="padding-top: 20px"] { flex-wrap: wrap !important; gap: 14px !important; align-items: flex-start !important; }
-    #root [style*="padding-top: 20px"] > span { flex-wrap: wrap !important; }
-
-    /* any data table scrolls horizontally rather than breaking layout */
+    #root [style*="minmax(196px, 1fr)"] { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; }
     #root table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   }
 
-  /* ═══════════ ≤480px — phones (320–480): maximum stacking, minimal padding,
-        crisper type and touch-friendly controls. Builds on the ≤767px tier
-        above, which already does the heavy stacking; these rules add the
-        phone-only refinements. Tablets (≥481px) and desktop are untouched. ═══════════ */
+  /* ═══ ≤480px — narrow phones ═══ */
   @media (max-width: 480px) {
-    /* ── 1 · Gutters: 12px side padding on every major section ── */
-    #root [style*="padding: 0 40px"],
-    #root [style*="padding: 24px 40px 0"],
-    #root [style*="padding: 22px 40px 0"],
-    #root [style*="padding: 30px 40px 0"],
-    #root [style*="padding: 34px 40px 0"],
-    #root [style*="padding: 40px 40px 28px"] { padding-left: 12px !important; padding-right: 12px !important; }
-
-    /* ── 1 · Headings scaled down proportionally ── */
-    #root [style*="font-size: 42px"] { font-size: 24px !important; letter-spacing: -0.5px !important; }
-    #root [style*="font-size: 32px"] { font-size: 22px !important; }
-    #root [style*="font-size: 28px"] { font-size: 21px !important; }
-    #root [style*="font-size: 23px"] { font-size: 19px !important; }
-    #root [style*="font-size: 21px"] { font-size: 18px !important; }
-    #root [style*="font-size: 19px"] { font-size: 17px !important; }
-    #root [style*="font-size: 18px"] { font-size: 16px !important; }
-    /* ── 1 · Body / supporting copy trimmed ~15–20% ── */
-    #root [style*="font-size: 16.5px"] { font-size: 14px !important; }
-    #root [style*="font-size: 15.5px"] { font-size: 13.5px !important; }
-    #root [style*="font-size: 14px"] { font-size: 12.5px !important; }
-    #root [style*="font-size: 13.5px"] { font-size: 12.5px !important; }
-
-    /* ── 2 · Header: smaller logo, compact search & action cluster ── */
-    #root img[alt="KAVO Grid"] { height: 34px !important; }
-    /* search bar: shorter, sits on its own full-width line (order set at ≤767) */
-    #root [style*="height: 50px"] { height: 44px !important; }
-    /* tighten the Orders / Account / Cart cluster so it fits a phone row */
-    #root [style*="gap: 22px"] { gap: 14px !important; }
-    /* nav row wraps and the All-Categories button keeps a tappable height */
-    #root [style*="height: 52px"] { height: auto !important; flex-wrap: wrap !important; gap: 10px 14px !important; padding: 8px 0 !important; }
-
-    /* ── 3 · Hero: tighter padding, shorter min-height, stacked full-width CTAs ── */
-    #root [style*="padding: 44px 48px"] { padding: 22px 16px !important; }
-    #root [style*="padding: 40px 44px"] { padding: 22px 16px !important; }
-    #root [style*="min-height: 348px"] { min-height: 240px !important; }
-    /* hero / RFQ-card button rows stack and each CTA goes full-width */
-    #root [style*="gap: 12px; position: relative; z-index: 2"] { flex-wrap: wrap !important; }
-    #root [style*="gap: 12px; position: relative; z-index: 2"] > button { flex: 1 1 100% !important; }
-    #root [style*="padding: 13px 24px"] { padding: 13px 18px !important; }
-
-    /* ── 4 · Carousels: tighter card chrome (1-per-slide already set at ≤767) ── */
-    #root [style*="padding: 13px 14px 15px"] { padding: 12px 12px 13px !important; }
-    #root [style*="height: 168px"] { height: 150px !important; }
-
-    /* ── 5 · Modals: near-full-bleed with slim radius; tables already scroll ── */
+    #root .ka-trust { grid-template-columns: 1fr !important; }
+    #root .ka-hero-ctas button, #root .ka-rfq-ctas button { flex: 1 1 100% !important; }
+    #root .ka-banner { padding: 26px 18px !important; }
+    #root .ka-brands { grid-template-columns: repeat(2, 1fr) !important; }
+    #root .ka-footer-grid { grid-template-columns: 1fr !important; gap: 22px !important; }
     #root [style*="padding: 48px 20px"] { padding: 8px 6px !important; }
-    #root [style*="border-radius: 18px"] { border-radius: 12px !important; }
     #root [style*="100vh - 96px"] { max-height: calc(100vh - 16px) !important; }
-    #root [style*="minmax(196px, 1fr)"] { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)) !important; }
-
-    /* ── 6 · Distributor logos 3-up → 2-up ── */
-    #root [style*="repeat(6"] { grid-template-columns: repeat(2, 1fr) !important; }
-
-    /* ── 10 · Touch targets: primary pill buttons keep a ≥44px tap height ── */
-    #root [style*="padding: 13px 24px"],
-    #root [style*="padding: 10px 16px"] { min-height: 44px !important; }
+  }
+  @media (max-width: 400px) {
+    /* Track Order stays in the category drawer; header keeps account + cart */
+    #root .ka-action-track { display: none !important; }
+    #root .ka-search-cat { padding: 0 9px !important; }
   }
 </style>
 
