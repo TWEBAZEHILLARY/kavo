@@ -21,7 +21,16 @@
   const today = () => new Date().toISOString().slice(0, 10);
   const lineTotal = (l) => (Number(l.qty) || 0) * (Number(l.price) || 0);
   const sumLines = (ls) => ls.reduce((s, l) => s + lineTotal(l), 0);
-  const totalOf = (r) => sumLines(r.items || []) - (Number(r.discount) || 0) + (Number(r.deliveryFee) || 0);
+  // Discount is entered either as a flat UGX amount or as a percentage of the
+  // subtotal. Both resolve to a UGX figure here so the total, the amount paid
+  // and the balance are always worked out from the same number.
+  const discountOf = (r) => {
+    const sub = sumLines(r.items || []);
+    const v = Number(r.discount) || 0;
+    const amt = r.discountMode === 'percent' ? (sub * v) / 100 : v;
+    return Math.min(sub, Math.max(0, Math.round(amt)));
+  };
+  const totalOf = (r) => Math.max(0, sumLines(r.items || []) - discountOf(r) + (Number(r.deliveryFee) || 0));
 
   // ── Printable receipt sheet ──────────────────────────────────────────────
   function receiptHTML(r) {
@@ -30,10 +39,11 @@
       <td class="r">${(Number(l.qty) || 0).toLocaleString('en-US')}</td>
       <td class="r">${money(l.price)}</td><td class="r">${money(lineTotal(l))}</td></tr>`).join('');
     const total = totalOf(r);
+    const disc = discountOf(r);
     const paid = Number(r.amountPaid) || 0;
     const balance = Math.max(0, total - paid);
     const extra = [
-      (Number(r.discount) || 0) > 0 ? ['Discount', '\u2212 ' + money(r.discount)] : null,
+      disc > 0 ? [r.discountMode === 'percent' ? `Discount (${Number(r.discount) || 0}%)` : 'Discount', '\u2212 ' + money(disc)] : null,
       (Number(r.deliveryFee) || 0) > 0 ? ['Delivery fee', money(r.deliveryFee)] : null,
     ].filter(Boolean).map(([k, v]) => `<div class="trow"><span>${k}</span><strong>${v}</strong></div>`).join('');
     return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(r.number)}</title><style>
@@ -121,7 +131,7 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
       id: A_uid('r_'), number: ReceiptStore.nextNumber(), date: today(),
       clientId: '', clientName: '', clientPhone: '', clientEmail: '', clientAddress: '',
       method: A_PAYMENTS[0], reference: '', orderId: '', notes: '',
-      discount: '', deliveryFee: '', amountPaid: '', issuedBy: '',
+      discount: '', discountMode: 'amount', deliveryFee: '', amountPaid: '', issuedBy: '',
       items: [blankLine()],
     });
     const [touched, setTouched] = React.useState(false);
@@ -139,7 +149,8 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
     };
 
     const subtotal = sumLines(f.items);
-    const total = subtotal - (Number(f.discount) || 0) + (Number(f.deliveryFee) || 0);
+    const discountAmt = discountOf(f);
+    const total = Math.max(0, subtotal - discountAmt + (Number(f.deliveryFee) || 0));
     const paid = f.amountPaid === '' ? total : Number(f.amountPaid) || 0;
     const balance = Math.max(0, total - paid);
     const validName = !!String(f.clientName).trim();
@@ -149,7 +160,8 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
       ...f,
       clientName: String(f.clientName).trim(),
       items: f.items.filter((l) => String(l.name).trim()).map((l) => ({ name: String(l.name).trim(), qty: Number(l.qty) || 0, price: Number(l.price) || 0 })),
-      discount: Number(f.discount) || 0, deliveryFee: Number(f.deliveryFee) || 0,
+      discount: Number(f.discount) || 0, discountMode: f.discountMode === 'percent' ? 'percent' : 'amount',
+      discountAmount: discountAmt, deliveryFee: Number(f.deliveryFee) || 0,
       amountPaid: paid, total, balance,
       savedAt: new Date().toISOString(),
     });
@@ -231,14 +243,28 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
             <Textarea value={f.notes} onChange={(e) => set('notes', e.target.value)} rows={4} placeholder="Anything to print on the receipt — terms, warranty, thanks." />
           </Field>
           <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 13, padding: 14 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-              <Field label="Discount"><Input value={f.discount} onChange={(e) => set('discount', e.target.value)} placeholder="0" /></Field>
+            <Field label="Discount" hint={f.discountMode === 'percent' ? `${Number(f.discount) || 0}% of ${A_money(subtotal)} = ${A_money(discountAmt)}` : 'Taken off the subtotal.'}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input type="number" min="0" value={f.discount} onChange={(e) => set('discount', e.target.value)} placeholder="0"
+                  style={{ flex: 1, minWidth: 0, border: `1.5px solid ${T.line}`, borderRadius: 9, padding: '9px 10px', fontSize: 13.5, fontFamily: F, color: T.ink, outline: 'none', background: '#fff', boxSizing: 'border-box' }} />
+                <div style={{ display: 'flex', border: `1.5px solid ${T.line}`, borderRadius: 9, overflow: 'hidden', flexShrink: 0 }}>
+                  {[['amount', 'USh'], ['percent', '%']].map(([id, lb]) => (
+                    <button key={id} onClick={() => set('discountMode', id)} title={id === 'percent' ? 'Percentage of the subtotal' : 'Flat amount in shillings'}
+                      style={{ border: 'none', cursor: 'pointer', fontFamily: F, fontSize: 12.5, fontWeight: 800, padding: '0 12px', color: f.discountMode === id ? '#fff' : T.sub, background: f.discountMode === id ? T.blue : '#fff' }}>{lb}</button>
+                  ))}
+                </div>
+              </div>
+            </Field>
+            <div style={{ marginTop: 10, marginBottom: 12 }}>
               <Field label="Delivery fee"><Input value={f.deliveryFee} onChange={(e) => set('deliveryFee', e.target.value)} placeholder="0" /></Field>
             </div>
             <Field label="Amount paid" hint="Leave blank for paid in full."><Input value={f.amountPaid} onChange={(e) => set('amountPaid', e.target.value)} placeholder={String(total)} /></Field>
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
-              {[['Subtotal', A_money(subtotal)], ['Total', A_money(total)], ['Paid', A_money(paid)]].map(([k, v], i) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: i === 1 ? 15 : 13, fontWeight: 800, color: i === 1 ? T.ink : T.sub }}>
+              {[['Subtotal', A_money(subtotal)]]
+                .concat(discountAmt > 0 ? [[f.discountMode === 'percent' ? `Discount (${Number(f.discount) || 0}%)` : 'Discount', '\u2212 ' + A_money(discountAmt)]] : [])
+                .concat((Number(f.deliveryFee) || 0) > 0 ? [['Delivery fee', A_money(Number(f.deliveryFee) || 0)]] : [])
+                .concat([['Total', A_money(total)], ['Paid', A_money(paid)]]).map(([k, v], i, arr) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: i === arr.length - 2 ? 15 : 13, fontWeight: 800, color: i === arr.length - 2 ? T.ink : T.sub }}>
                   <span>{k}</span><span style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{v}</span></div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: 6, borderTop: `1px solid ${T.line}`, fontSize: 13.5, fontWeight: 800, color: balance > 0 ? T.red : T.green }}>
