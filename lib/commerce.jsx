@@ -1227,7 +1227,19 @@
   const termOf = (p) => (p && p.payment_terms) || 'Advance Payment';
 
   // ── Delivery-area + WhatsApp helpers (Kampala vs outside) ──
-  const KAMPALA_DELIVERY_FEE = 5000;
+  // Delivery fee is configured by the administrator (admin console → Settings →
+  // Delivery fee) and stored in pps_delivery_fee: { show, scope, amount }.
+  // show:false hides the line and charges nothing; scope 'kampala' charges only
+  // Kampala addresses, 'all' charges every order.
+  const DELIVERY_KEY = 'pps_delivery_fee';
+  const DEFAULT_DELIVERY_CFG = { show: true, scope: 'kampala', amount: 5000 };
+  const getDeliveryCfg = () => {
+    try { const r = JSON.parse(localStorage.getItem(DELIVERY_KEY)); if (r && typeof r === 'object') return { ...DEFAULT_DELIVERY_CFG, ...r, amount: Number(r.amount) || 0 }; } catch (e) {}
+    return { ...DEFAULT_DELIVERY_CFG };
+  };
+  // True when this address should be charged under the current configuration.
+  const deliveryChargeable = (area) => { const c = getDeliveryCfg(); return c.show && (c.scope === 'all' || area === 'kampala'); };
+  const deliveryAmount = (area) => (deliveryChargeable(area) ? getDeliveryCfg().amount : 0);
   const WA_NUMBER = '256764250125';
   const WA_DEFAULT_TEXT = 'Hello, I need delivery for my order outside Kampala.';
   const waUrl = (msg) => 'https://wa.me/' + WA_NUMBER + '?text=' + encodeURIComponent(msg || WA_DEFAULT_TEXT);
@@ -1256,7 +1268,8 @@
     const address = resolveClientAddress(AuthStore.get());
     const deliveryArea = detectDeliveryArea(address);
     const hasAddress = !!String(address || '').trim();
-    const deliveryFee = deliveryArea === 'kampala' ? KAMPALA_DELIVERY_FEE : 0;
+    const delCfg = getDeliveryCfg();
+    const deliveryFee = deliveryAmount(deliveryArea);
     const grandTotal = subtotal + importFees + deliveryFee;
     const [phase, setPhase] = React.useState('confirm'); // confirm | success
     const [amount, setAmount] = React.useState(grandTotal);
@@ -1359,15 +1372,15 @@
                 <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 14, padding: '14px 16px', marginBottom: 16 }}>
                   {lblRow('Subtotal', <AnimatedPrice ugx={subtotal} style={{ fontSize: 14, fontWeight: 800, color: T.ink }} />)}
                   {importFees > 0 && lblRow('Import fees', <AnimatedPrice ugx={importFees} style={{ fontSize: 14, fontWeight: 800, color: T.ink }} />)}
-                  {deliveryArea === 'kampala'
+                  {delCfg.show && (deliveryFee > 0
                     ? lblRow('Delivery Fee', <AnimatedPrice ugx={deliveryFee} style={{ fontSize: 14, fontWeight: 800, color: T.ink }} />)
-                    : lblRow('Delivery', <span style={{ fontSize: 13.5, fontWeight: 800, color: T.amberInk }}>To be arranged</span>)}
+                    : lblRow('Delivery', <span style={{ fontSize: 13.5, fontWeight: 800, color: T.amberInk }}>To be arranged</span>))}
                   <div style={{ borderTop: `1px solid ${T.line}`, margin: '12px 0 0', paddingTop: 12 }}>
                     {lblRow('Grand total', <AnimatedPrice ugx={grandTotal} style={{ fontSize: 20, fontWeight: 800, color: T.ink }} />, { bold: true, last: true })}
                   </div>
                 </div>
 
-                {deliveryArea === 'outside' && (
+                {delCfg.show && deliveryArea === 'outside' && delCfg.scope === 'kampala' && (
                   <div style={{ border: `1.5px solid ${T.amber}`, background: '#FFF8EC', borderRadius: 14, padding: '15px 16px', marginBottom: 16 }}>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 12 }}>
                       <Icon name="truck" size={19} color={T.amberInk} stroke={1.9} />
