@@ -8,7 +8,7 @@
   const { Button, ToastStore } = window;
 
   // ── Permission modules (granular RBAC) ──────────────────────────────────
-  const MODULES = ['Products', 'Clients', 'Orders', 'Inquiries', 'Quotes', 'Deliveries', 'LPOs', 'Reports', 'Notifications', 'Employees'];
+  const MODULES = ['Products', 'Clients', 'Orders', 'Inquiries', 'Quotes', 'Receipts', 'Deliveries', 'LPOs', 'Reports', 'Notifications', 'Employees'];
 
   // The single hardcoded admin email permitted to trigger a password reset.
   const ADMIN_EMAIL = 'twebazehillary@gmail.com';

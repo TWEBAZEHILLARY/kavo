@@ -13,6 +13,7 @@
     { id: 'orders', label: 'Orders', icon: 'cart' },
     { id: 'inquiries', label: 'Inquiries', icon: 'doc' },
     { id: 'quotes', label: 'Quotes', icon: 'download' },
+    { id: 'receipts', label: 'Receipts', icon: 'check' },
     { id: 'deliveries', label: 'Deliveries', icon: 'cart' },
     { id: 'lpos', label: 'LPO', icon: 'doc' },
     { id: 'employees', label: 'Employees', icon: 'shield' },
@@ -20,7 +21,7 @@
   ];
   // RBAC: each view maps to the permission module that unlocks it.
   // Dashboard is always available to a signed-in user. Settings is admin-only.
-  const VIEW_PERM = { dashboard: null, reports: 'Reports', products: 'Products', clients: 'Clients', orders: 'Orders', inquiries: 'Inquiries', quotes: 'Quotes', deliveries: 'Deliveries', lpos: 'LPOs', employees: 'Employees', settings: '__admin__' };
+  const VIEW_PERM = { dashboard: null, reports: 'Reports', products: 'Products', clients: 'Clients', orders: 'Orders', inquiries: 'Inquiries', quotes: 'Quotes', receipts: 'Receipts', deliveries: 'Deliveries', lpos: 'LPOs', employees: 'Employees', settings: '__admin__' };
   const canView = (auth, id) => !!auth && (VIEW_PERM[id] === '__admin__' ? auth.role === 'admin' : (!VIEW_PERM[id] || auth.role === 'admin' || (auth.permissions || []).includes(VIEW_PERM[id])));
 
   // ── Sidebar ──────────────────────────────────────────────────────────────
@@ -168,7 +169,7 @@
     if (!auth) return (<React.Fragment><LoginScreen /><ResetLinkGate /><ToastHost /></React.Fragment>);
     const Views = {
       dashboard: window.AdminDashboard, reports: window.AdminReports, products: window.AdminProducts,
-      clients: window.AdminClients, orders: window.AdminOrders, inquiries: window.AdminInquiries, quotes: window.AdminQuotes, deliveries: window.AdminDeliveries, lpos: window.AdminLPOs,
+      clients: window.AdminClients, orders: window.AdminOrders, inquiries: window.AdminInquiries, quotes: window.AdminQuotes, receipts: window.AdminReceipts, deliveries: window.AdminDeliveries, lpos: window.AdminLPOs,
       employees: window.AdminEmployees, settings: window.AdminSettings,
     };
     const View = Views[view] || window.AdminDashboard;

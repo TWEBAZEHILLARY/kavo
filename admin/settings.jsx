@@ -6,6 +6,7 @@
   const T = window.ADMIN_T, F = window.ADMIN_F;
   const { Card, PageHead, Button, Field, Input, ConfirmStore, ToastStore,
     CurrencyRates, useCurrencyRates, A_DEFAULT_RATES, A_money,
+    DeliveryFee, useDeliveryFee, A_DEFAULT_DELIVERY,
     HeroMedia, useHeroMedia } = window;
 
   function RateField({ label, sym, value, onChange, err }) {
@@ -152,6 +153,88 @@
     );
   }
 
+  // ── Delivery fee ───────────────────────────────────────────────────
+  // The administrator decides whether a delivery fee is shown at all, who it
+  // applies to, and how much it is. lib/commerce.jsx reads the same key at
+  // checkout, so a change here changes what every shopper is charged.
+  function DeliveryFeeCard() {
+    const cfg = useDeliveryFee();
+    const [show, setShow] = React.useState(cfg.show);
+    const [scope, setScope] = React.useState(cfg.scope);
+    const [amount, setAmount] = React.useState(String(cfg.amount));
+    const amtN = Number(amount);
+    const bad = show && !(amtN >= 0);
+    const dirty = show !== cfg.show || scope !== cfg.scope || String(cfg.amount) !== String(amtN);
+
+    const save = () => {
+      if (bad) { ToastStore.push('Enter the delivery fee in UGX (0 or more).', { title: 'Check the amount', icon: 'doc', tone: 'error' }); return; }
+      DeliveryFee.save({ show, scope, amount: amtN });
+      ToastStore.push(show ? `Delivery fee set to ${A_money(amtN)} for ${scope === 'all' ? 'every order' : 'Kampala addresses'}.` : 'Delivery fee hidden — checkout charges nothing for delivery.', { title: 'Delivery fee saved', icon: 'check', tone: 'ok' });
+    };
+    const reset = () => ConfirmStore.open({
+      title: 'Reset delivery fee', confirmLabel: 'Reset',
+      sub: `Shown · Kampala only · ${A_money(A_DEFAULT_DELIVERY.amount)}`,
+      body: 'Restore the default delivery fee setting?',
+      onConfirm: () => { DeliveryFee.reset(); const d = DeliveryFee.get(); setShow(d.show); setScope(d.scope); setAmount(String(d.amount)); ToastStore.push('Default delivery fee restored.', { title: 'Delivery fee reset', icon: 'rotate', tone: 'info' }); },
+    });
+
+    const Toggle = ({ on, onClick }) => (
+      <button onClick={onClick} role="switch" aria-checked={on} style={{ width: 52, height: 30, borderRadius: 999, border: 'none', cursor: 'pointer', padding: 3, background: on ? T.green : T.line, transition: 'background .18s', flexShrink: 0 }}>
+        <span style={{ display: 'block', width: 24, height: 24, borderRadius: 999, background: '#fff', boxShadow: '0 1px 3px rgba(11,26,51,.28)', transform: on ? 'translateX(22px)' : 'translateX(0)', transition: 'transform .18s' }} />
+      </button>
+    );
+    const Choice = ({ id, title, desc }) => (
+      <button onClick={() => setScope(id)} style={{ textAlign: 'left', cursor: 'pointer', fontFamily: F, padding: '12px 14px', borderRadius: 12, background: scope === id ? T.blueWash : '#fff', border: `1.5px solid ${scope === id ? T.blue : T.line}` }}>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{title}</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, marginTop: 3, lineHeight: 1.45 }}>{desc}</div>
+      </button>
+    );
+
+    return (
+      <Card style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ width: 42, height: 42, borderRadius: 11, background: T.tealWash, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name="cart" size={22} color={T.teal} stroke={2} /></div>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: -0.3 }}>Delivery fee</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.sub, marginTop: 2 }}>Decide whether checkout shows a delivery fee, who pays it, and how much.</div>
+          </div>
+          {dirty && <span style={{ fontSize: 12.5, fontWeight: 800, color: T.amberInk, background: '#FFF3DC', padding: '7px 12px', borderRadius: 999 }}>Unsaved</span>}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 18, padding: '13px 15px', border: `1px solid ${T.line}`, borderRadius: 12, background: T.surface }}>
+          <Toggle on={show} onClick={() => setShow((v) => !v)} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{show ? 'Delivery fee is shown at checkout' : 'Delivery fee is hidden'}</div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>{show ? 'Shoppers see a delivery line on the order summary and receipt.' : 'No delivery line appears and nothing is added to the total.'}</div>
+          </div>
+        </div>
+
+        {show && (
+          <React.Fragment>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14 }} className="adm-del-grid">
+              <Choice id="kampala" title="Kampala addresses only" desc="Charged inside Kampala. Deliveries elsewhere show “To be arranged”." />
+              <Choice id="all" title="Every order" desc="The same fee is charged no matter where the order is going." />
+            </div>
+            <div style={{ marginTop: 16, maxWidth: 320 }}>
+              <Field label="Amount charged">
+                <div style={{ display: 'flex', alignItems: 'stretch', border: `1.5px solid ${bad ? T.red : T.line}`, borderRadius: 11, overflow: 'hidden', background: '#fff' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', padding: '0 14px', background: T.surface, borderRight: `1.5px solid ${T.line}`, fontSize: 13, fontWeight: 800, color: T.sub }}>USh</span>
+                  <input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)}
+                    style={{ flex: 1, border: 'none', outline: 'none', padding: '11px 13px', fontSize: 15, fontWeight: 700, fontFamily: F, color: T.ink, background: 'transparent', fontVariantNumeric: 'tabular-nums' }} />
+                </div>
+              </Field>
+            </div>
+          </React.Fragment>
+        )}
+
+        <div style={{ display: 'flex', gap: 11, marginTop: 20 }}>
+          <Button variant="primary" icon="check" onClick={save}>Save delivery fee</Button>
+          <Button variant="ghost" icon="rotate" onClick={reset}>Reset to default</Button>
+        </div>
+      </Card>
+    );
+  }
+
   function Settings() {
     const saved = useCurrencyRates();
     const [usd, setUsd] = React.useState(String(saved.usdToUgx));
@@ -232,6 +315,7 @@
           </Card>
         </div>
 
+        <DeliveryFeeCard />
         <HeroMediaCard />
         <CloudSyncCard />
       </div>
@@ -271,7 +355,7 @@
 
   if (!document.getElementById('adm-set-css')) {
     const s = document.createElement('style'); s.id = 'adm-set-css';
-    s.textContent = '@media (max-width: 820px){ .adm-set-grid{grid-template-columns:1fr!important} }';
+    s.textContent = '@media (max-width: 820px){ .adm-set-grid{grid-template-columns:1fr!important} .adm-del-grid{grid-template-columns:1fr!important} }';
     document.head.appendChild(s);
   }
 

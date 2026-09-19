@@ -437,6 +437,60 @@
   })();
   function useCurrencyRates() { const [r, set] = React.useState(CurrencyRates.get()); React.useEffect(() => CurrencyRates.sub(set), []); return r; }
 
+  // ── Delivery fee (admin-owned) ──────────────────────────────────────────
+  // Stored as pps_delivery_fee: { show, scope, amount }.
+  //   show   — false hides the delivery line from the storefront entirely (fee 0)
+  //   scope  — 'kampala' charges Kampala addresses only (others "to be arranged")
+  //            'all' charges every order regardless of address
+  //   amount — the fee in UGX the admin decides
+  // lib/commerce.jsx reads this key at checkout.
+  const DEL_KEY = 'pps_delivery_fee';
+  const DEFAULT_DELIVERY = { show: true, scope: 'kampala', amount: 5000 };
+  const DeliveryFee = (() => {
+    const subs = new Set();
+    let cfg = (() => {
+      try { const r = JSON.parse(localStorage.getItem(DEL_KEY)); if (r && typeof r === 'object') return { ...DEFAULT_DELIVERY, ...r, amount: Number(r.amount) || 0 }; } catch (e) {}
+      return { ...DEFAULT_DELIVERY };
+    })();
+    return {
+      get: () => cfg,
+      save: (v) => {
+        cfg = { show: !!v.show, scope: v.scope === 'all' ? 'all' : 'kampala', amount: Math.max(0, Number(v.amount) || 0) };
+        try { localStorage.setItem(DEL_KEY, JSON.stringify(cfg)); } catch (e) {}
+        subs.forEach((f) => f(cfg));
+      },
+      reset: () => DeliveryFee.save({ ...DEFAULT_DELIVERY }),
+      sub: (f) => { subs.add(f); return () => subs.delete(f); },
+    };
+  })();
+  function useDeliveryFee() { const [c, set] = React.useState(DeliveryFee.get()); React.useEffect(() => DeliveryFee.sub(set), []); return c; }
+
+  // ── Payment receipts (admin-issued) ─────────────────────────────────────
+  // Stored as pps_receipts: manually raised receipts for payments taken at the
+  // counter, by bank transfer or mobile money — independent of storefront orders.
+  const RCPT_KEY = 'pps_receipts';
+  const ReceiptStore = (() => {
+    const subs = new Set();
+    let list = (() => { try { const r = JSON.parse(localStorage.getItem(RCPT_KEY)); return Array.isArray(r) ? r : []; } catch (e) { return []; } })();
+    const persistR = () => { try { localStorage.setItem(RCPT_KEY, JSON.stringify(list)); } catch (e) {} };
+    const emitR = () => { list = list.slice(); subs.forEach((f) => f(list)); };
+    return {
+      get: () => list,
+      nextNumber: () => {
+        const n = list.reduce((m, r) => { const x = /RCP-(\d+)$/.exec(r.number || ''); return x ? Math.max(m, parseInt(x[1], 10)) : m; }, 1000) + 1;
+        return 'RCP-' + n;
+      },
+      save: (r) => {
+        const i = list.findIndex((x) => x.id === r.id);
+        if (i >= 0) list[i] = r; else list = [r, ...list];
+        persistR(); emitR(); return r;
+      },
+      remove: (id) => { list = list.filter((r) => r.id !== id); persistR(); emitR(); },
+      sub: (f) => { subs.add(f); return () => subs.delete(f); },
+    };
+  })();
+  function useReceipts() { const [l, set] = React.useState(ReceiptStore.get()); React.useEffect(() => ReceiptStore.sub(set), []); return l; }
+
   // ── Homepage hero media (admin-owned) ──────────────────────────────────
   // Stored as pps_hero_media: [{ id, type: 'image'|'video', src, name }].
   // The storefront HeroSlideshow (screens/home-a.jsx) reads this key on load,
@@ -501,5 +555,7 @@
     DataStore, useData, ToastStore, useToasts, Router, useRouter,
     CurrencyRates, useCurrencyRates, A_DEFAULT_RATES: DEFAULT_RATES,
     HeroMedia, useHeroMedia, A_DEFAULT_HERO_MEDIA: DEFAULT_HERO_MEDIA,
+    DeliveryFee, useDeliveryFee, A_DEFAULT_DELIVERY: DEFAULT_DELIVERY,
+    ReceiptStore, useReceipts,
   });
 })();
