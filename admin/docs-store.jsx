@@ -109,7 +109,7 @@
         <img class="pd-logo" src="${window.COMPANY_LOGO}" alt="${esc(COMPANY.name)}" />
         <div class="pd-co">
           <div class="pd-coname">${esc(COMPANY.name)}</div>
-          <div>${esc(COMPANY.address)}</div>
+          <div>${esc(COMPANY.address)} &nbsp;·&nbsp; ${esc(COMPANY.postal)}</div>
           <div>Tel ${esc(COMPANY.phone)} &nbsp;·&nbsp; ${esc(COMPANY.email)} &nbsp;·&nbsp; ${esc(COMPANY.web)}</div>
           <div><strong>TIN: ${esc(COMPANY.tin)}</strong></div>
         </div>
@@ -138,6 +138,7 @@
           <div class="pd-lbl">From</div>
           <div class="pd-pname">${esc(COMPANY.name)}</div>
           <div>${esc(COMPANY.address)}</div>
+          <div>${esc(COMPANY.postal)}</div>
           <div>TIN: ${esc(COMPANY.tin)}</div>
           <div>Tel: ${esc(COMPANY.phone)}</div>
           <div>${esc(COMPANY.email)}</div>
@@ -168,7 +169,7 @@
         <div class="pd-sigbox"><div class="pd-lbl">Received By</div><div class="pd-sigline"></div><div class="pd-sigmeta">Name &amp; Signature</div><div class="pd-sigline"></div><div class="pd-sigmeta">Date</div></div>
         <div class="pd-sigbox"><div class="pd-lbl">Company Stamp</div><div class="pd-stamp"></div></div>
       </div>
-      <div class="pd-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}<br />Computer-generated delivery note. Goods must be checked on receipt; claims accepted within 48 hours of delivery.</div>
+      <div class="pd-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.postal)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}<br />Computer-generated delivery note. Goods must be checked on receipt; claims accepted within 48 hours of delivery.</div>
     </div>`;
   }
   const buildDeliveryHTML = (n, copies) => (copies || ['ORIGINAL']).map((c) => buildDeliveryPage(n, c)).join('');
@@ -238,7 +239,7 @@
           <li>Delivery date to be confirmed in writing by the supplier.</li>
         </ol>
       </div>
-      <div class="pd-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}<br />System-generated purchase order.</div>
+      <div class="pd-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.postal)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}<br />System-generated purchase order.</div>
     </div>`;
   }
   const buildLPOHTML = (o, copies) => (copies || ['ORIGINAL']).map((c) => buildLPOPage(o, c)).join('');

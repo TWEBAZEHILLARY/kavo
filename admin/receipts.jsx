@@ -12,6 +12,7 @@
   const COMPANY = {
     name: 'Kavo Grid (U) Ltd.',
     address: 'Plot 24, Ntinda Industrial Area, Kampala, Uganda',
+    postal: 'P.O. Box 219047, Kampala – Uganda',
     phone: '+256764250125',
     email: 'kavogrid@gmail.com',
     web: 'kavogrid.org',
@@ -82,7 +83,7 @@ table.items td{padding:9px 10px;border-bottom:1px solid #EDF1F7;font-size:11.5px
 .foot{margin-top:24px;padding-top:10px;border-top:1px solid #E4E9F2;text-align:center;font-size:9.5px;color:#8A98B0}
 </style></head><body>
 <div class="top"><img class="logo" src="${window.COMPANY_LOGO}" alt="${esc(COMPANY.name)}" />
-<div class="co"><div>${esc(COMPANY.address)}</div><div>${esc(COMPANY.phone)}</div><div>${esc(COMPANY.email)} &middot; ${esc(COMPANY.web)}</div></div></div>
+<div class="co"><div>${esc(COMPANY.address)}</div><div>${esc(COMPANY.postal)}</div><div>${esc(COMPANY.phone)}</div><div>${esc(COMPANY.email)} &middot; ${esc(COMPANY.web)}</div></div></div>
 <div class="bar"><div class="ttl">PAYMENT RECEIPT</div><div class="num">No. ${esc(r.number)}</div></div>
 <div class="meta"><div class="to"><div class="lbl">Received From</div><div class="cl">${esc(r.clientName)}</div>
 ${r.clientPhone ? `<div>${esc(r.clientPhone)}</div>` : ''}${r.clientEmail ? `<div>${esc(r.clientEmail)}</div>` : ''}${r.clientAddress ? `<div>${esc(r.clientAddress)}</div>` : ''}</div>
@@ -103,7 +104,7 @@ ${balance === 0 ? '<div class="stamp">PAID IN FULL</div>' : ''}
 <div class="trow grand"><span>Total</span><strong>${money(total)}</strong></div>
 <div class="trow"><span>Amount paid</span><strong class="paid">${money(paid)}</strong></div>
 ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">${money(balance)}</strong></div>` : ''}</div></div>
-<div class="foot">${esc(COMPANY.name)} &middot; ${esc(COMPANY.address)} &middot; ${esc(COMPANY.phone)} &middot; ${esc(COMPANY.email)} &middot; ${esc(COMPANY.web)}</div>
+<div class="foot">${esc(COMPANY.name)} &middot; ${esc(COMPANY.address)} &middot; ${esc(COMPANY.postal)} &middot; ${esc(COMPANY.phone)} &middot; ${esc(COMPANY.email)} &middot; ${esc(COMPANY.web)}</div>
 </body></html>`;
   }
 

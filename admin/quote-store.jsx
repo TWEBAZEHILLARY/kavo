@@ -7,6 +7,7 @@
     name: 'Kavo Grid (U) Ltd.',
     tagline: 'Electrical Distribution · Automation · Power',
     address: 'Plot 24, Ntinda Industrial Area, Kampala, Uganda',
+    postal: 'P.O. Box 219047, Kampala – Uganda',
     phone: '+256 764 250 125',
     email: 'kavogrid@gmail.com',
     web: 'kavogrid.org',
@@ -144,6 +145,7 @@
         </div>
         <div class="pq-cohead">
           <div>${esc(COMPANY.address)}</div>
+          <div>${esc(COMPANY.postal)}</div>
           <div>${esc(COMPANY.phone)}</div>
           <div>${esc(COMPANY.email)}</div>
           <div>${esc(COMPANY.web)}</div>
@@ -212,7 +214,7 @@
         </div>
       </div>
 
-      <div class="pq-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}</div>
+      <div class="pq-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.postal)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}</div>
     </div>`;
   }
 

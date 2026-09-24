@@ -8,7 +8,7 @@
     Field, Input, Textarea, Modal, ConfirmStore, ToastStore, useData, useAuth, A_field,
     Q_fmtMoney, Q_fmtDate, Q_todayISO, PPS_PAYMENT_TERMS, PPS_CURRENCIES,
     DeliveryStore, LPOStore, useDeliveries, useLPOs, buildDeliveryHTML, buildLPOHTML,
-    printDelivery, printLPO, D_lpoTotals, D_amountInWords } = window;
+    printDelivery, printLPO, D_lpoTotals, D_amountInWords, useQuotes } = window;
 
   const UOMS = ['Pcs', 'Mtrs', 'Kg', 'Set', 'Box', 'Roll', 'Unit', 'Pair', 'Lot'];
   const DN_STATUSES = ['Draft', 'Dispatched', 'Delivered'];
@@ -32,7 +32,7 @@
   );
 
   // ═══════════════════════ DELIVERY NOTE BUILDER ════════════════════════════
-  function DeliveryBuilder({ existing, onClose }) {
+  function DeliveryBuilder({ existing, prefill, onClose }) {
     const auth = useAuth();
     const d = useData();
     const blank = () => {
@@ -43,7 +43,7 @@
         items: [{ code: '', itemNo: '', description: '', qty: 1, uom: 'Pcs' }],
         status: 'Draft', createdAt: new Date().toISOString() };
     };
-    const [n, setN] = React.useState(() => existing ? JSON.parse(JSON.stringify(existing)) : blank());
+    const [n, setN] = React.useState(() => existing ? JSON.parse(JSON.stringify(existing)) : { ...blank(), ...(prefill || {}) });
     const [err, setErr] = React.useState('');
     const clientLabel = (c) => (c && (c.companyName || c.name)) || '';
     const onCompany = (e) => {
@@ -73,7 +73,7 @@
     const pdf = () => { if (!validate()) return; printDelivery(persist()); ToastStore.push('Original + copy queued — choose “Save as PDF”.', { title: 'PDF ready', icon: 'download', tone: 'info' }); };
 
     return (
-      <Modal title={existing ? `Edit ${n.number}` : 'Create Delivery Note'} sub={existing ? n.client.company : n.number + ' · draft'} width={1100} onClose={onClose}
+      <Modal title={existing ? `Edit ${n.number}` : 'Create Delivery Note'} sub={existing ? n.client.company : n.number + ' · draft' + (n.fromQuote ? ' · from quotation ' + n.fromQuote : '')} width={1100} onClose={onClose}
         footer={<React.Fragment>
           <div style={{ marginRight: 'auto', fontSize: 12.5, fontWeight: 700, color: T.sub }}>{n.items.length} line{n.items.length === 1 ? '' : 's'}</div>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -284,6 +284,43 @@
     );
   }
 
+  // ═════════════════ QUOTATION → DELIVERY NOTE PICKER ═══════════════════════
+  // Copies the client and every line (code, description, qty, UOM) from a saved
+  // quotation into a new delivery note, so nothing has to be retyped.
+  const quoteToDelivery = (q) => ({
+    client: { company: q.client.company || '', tin: q.client.tin || '', phone: q.client.phone || '', address: q.client.address || '', email: q.client.email || '' },
+    customerRef: 'Quotation ' + q.number,
+    fromQuote: q.number,
+    items: (q.items || []).filter((it) => String(it.description || '').trim()).map((it) => ({ code: it.code || '', itemNo: '', description: it.description || '', qty: Number(it.qty) || 0, uom: UOMS.includes(it.uom) ? it.uom : 'Pcs' })),
+  });
+  function QuotePicker({ onPick, onClose }) {
+    const quotes = useQuotes();
+    const [q, setQ] = React.useState('');
+    const list = quotes.filter((x) => !q.trim() || (x.number + ' ' + (x.client.company || '')).toLowerCase().includes(q.trim().toLowerCase()))
+      .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date));
+    return (
+      <Modal title="Create from quotation" sub="Pick a quotation — its client and items are copied into a new delivery note" width={760} onClose={onClose}
+        footer={<Button variant="ghost" onClick={onClose}>Cancel</Button>}>
+        <div style={{ marginBottom: 14 }}><Search value={q} onChange={setQ} placeholder="Search quotation # or client…" width={320} /></div>
+        {list.length === 0 ? <Empty icon="doc" title={quotes.length ? 'No matching quotations' : 'No quotations yet'} sub={quotes.length ? 'Try another search.' : 'Create a quotation in the Quotes section first.'} /> : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {list.map((x) => (
+              <button key={x.id} onClick={() => onPick(x)} style={{ display: 'flex', alignItems: 'center', gap: 14, textAlign: 'left', width: '100%', cursor: 'pointer', fontFamily: F, background: '#fff', border: `1.5px solid ${T.line}`, borderRadius: 12, padding: '12px 14px' }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.blue; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.line; }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{x.number}</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.client.company || '—'} · {Q_fmtDate(x.date)} · {(x.items || []).length} item{(x.items || []).length === 1 ? '' : 's'}</div>
+                </div>
+                <DStatus status={x.status} />
+                <span style={{ fontSize: 12.5, fontWeight: 800, color: T.blue, whiteSpace: 'nowrap' }}>Use →</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
+    );
+  }
+
   // ═════════════════════════ DELIVERIES SECTION ═════════════════════════════
   function Deliveries() {
     const list0 = useDeliveries();
@@ -292,6 +329,7 @@
     const [status, setStatus] = React.useState('All');
     const [building, setBuilding] = React.useState(null);
     const [preview, setPreview] = React.useState(null);
+    const [picking, setPicking] = React.useState(false);
     const isAdmin = !!auth && auth.role === 'admin';
     const del = (x) => {
       if (!isAdmin) { ToastStore.push('Only admins can delete delivery notes.', { title: 'Access denied', icon: 'lock', tone: 'error' }); return; }
@@ -306,6 +344,7 @@
     return (
       <div>
         <PageHead title="Deliveries" sub={`${list0.length} delivery note${list0.length === 1 ? '' : 's'} · issue, print & track`}>
+          <Button variant="ghost" icon="doc" onClick={() => setPicking(true)}>From Quotation</Button>
           <Button icon="plus" onClick={() => setBuilding({})}>Create Delivery Note</Button>
         </PageHead>
         <Card pad={14} style={{ marginBottom: 16, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -336,7 +375,8 @@
             ))}
           </Table>
         )}
-        {building && <DeliveryBuilder existing={building.existing} onClose={() => setBuilding(null)} />}
+        {building && <DeliveryBuilder existing={building.existing} prefill={building.prefill} onClose={() => setBuilding(null)} />}
+        {picking && <QuotePicker onClose={() => setPicking(false)} onPick={(x) => { setPicking(false); setBuilding({ prefill: quoteToDelivery(x) }); ToastStore.push(`Client and ${(x.items || []).length} item(s) copied from ${x.number}. Review and save.`, { title: 'Quotation loaded', icon: 'check', tone: 'ok' }); }} />}
         {preview && <DocPreview title={preview.number} sub={`${preview.client.company} · ${preview.status}`} html={buildDeliveryHTML(preview, ['ORIGINAL'])} onClose={() => setPreview(null)} onEdit={() => setBuilding({ existing: preview })} onPrint={() => printDelivery(preview)} />}
       </div>
     );
