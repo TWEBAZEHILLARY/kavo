@@ -814,16 +814,40 @@
     const p = productDetail(base);
     const off = p.was ? Math.round((1 - p.ugx / p.was) * 100) : 0;
     const [open, setOpen] = React.useState(0);
+    // Photo gallery: admin can attach up to 5 photos (p.images); the first is
+    // the main one. Falls back to the single p.image for older products.
+    const gallery = (Array.isArray(p.images) && p.images.filter(Boolean).length ? p.images.filter(Boolean) : (p.image ? [p.image] : [])).slice(0, 5);
+    const [shot, setShot] = React.useState(0);
+    const cur = gallery[shot] || p.image;
+    const step = (d) => setShot((s) => (s + d + gallery.length) % gallery.length);
+    const arrow = { position: 'absolute', top: '50%', transform: 'translateY(-50%)', width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.94)', color: T.ink, fontSize: 20, lineHeight: '30px', fontWeight: 700, cursor: 'pointer', padding: 0, fontFamily: F, boxShadow: '0 2px 8px rgba(11,26,51,.12)' };
     return (
       <Overlay width={1000} onClose={() => ModalStore.close()}>
         <ModalHead title="Product Details" sub={p.sku} onClose={() => ModalStore.close()} />
         <div style={{ flex: '1 1 auto', overflowY: 'auto', background: T.surface }}>
           {/* hero */}
           <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: 24, padding: 24, background: '#fff', borderBottom: `1px solid ${T.line}` }}>
-            <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: `1px solid ${T.line}`, background: T.surface, height: 360 }}>
-              <ProductShot icon={p.icon} img={p.image} bg={T.surface} tint="#A6B4CC" pad={60} />
+            <div className="kg-pd-gallery" style={{ display: 'flex', gap: 10, minWidth: 0 }}>
+            {gallery.length > 1 && (
+              <div className="kg-pd-thumbs" style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+                {gallery.map((g, i) => (
+                  <button key={i} onClick={() => setShot(i)} aria-label={'Photo ' + (i + 1)}
+                    style={{ width: 62, height: 62, padding: 0, borderRadius: 11, overflow: 'hidden', cursor: 'pointer', background: '#fff', border: `2px solid ${i === shot ? T.blue : T.line}`, opacity: i === shot ? 1 : 0.72, transition: 'opacity .15s, border-color .15s' }}>
+                    <ProductShot icon={p.icon} img={g} bg="#fff" tint="#A6B4CC" pad={6} />
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ position: 'relative', flex: 1, minWidth: 0, borderRadius: 16, overflow: 'hidden', border: `1px solid ${T.line}`, background: T.surface, height: 360 }}>
+              <div key={shot} style={{ position: 'absolute', inset: 0, animation: 'kgPdFade .28s ease-out' }}><ProductShot icon={p.icon} img={cur} bg={T.surface} tint="#A6B4CC" pad={60} /></div>
+              {gallery.length > 1 && <React.Fragment>
+                <button onClick={() => step(-1)} aria-label="Previous photo" style={{ ...arrow, left: 10 }}>‹</button>
+                <button onClick={() => step(1)} aria-label="Next photo" style={{ ...arrow, right: 10 }}>›</button>
+                <div style={{ position: 'absolute', left: '50%', bottom: 14, transform: 'translateX(-50%)', fontSize: 11.5, fontWeight: 800, color: T.ink, background: 'rgba(255,255,255,.92)', border: `1px solid ${T.line}`, padding: '3px 10px', borderRadius: 999, fontVariantNumeric: 'tabular-nums' }}>{shot + 1} / {gallery.length}</div>
+              </React.Fragment>}
               {p.badge && <div style={{ position: 'absolute', top: 14, left: 14, background: p.badge === 'Best Seller' ? T.ink : p.badge === 'Deal' ? T.amber : T.blue, color: p.badge === 'Deal' ? T.amberInk : '#fff', fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, padding: '5px 11px', borderRadius: 999, textTransform: 'uppercase' }}>{p.badge}</div>}
               {off > 0 && <div style={{ position: 'absolute', bottom: 14, right: 14, background: T.red, color: '#fff', fontSize: 14, fontWeight: 800, padding: '5px 11px', borderRadius: 8 }}>−{off}%</div>}
+            </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: T.blue, letterSpacing: 0.5, textTransform: 'uppercase' }}>{p.brand}</div>
@@ -1761,4 +1785,13 @@
 
   Object.assign(window, { CartStore, useCart, AuthStore, useAuth, ToastStore, ModalStore, CommerceHost, AddBtn,
     openProductDetails: (id) => ModalStore.open('productDetails', { id }) });
+})();
+
+// Product gallery: fade between photos; on phones the thumbnail strip moves under the main photo.
+(function () {
+  if (document.getElementById('kg-pd-gallery-css')) return;
+  const st = document.createElement('style'); st.id = 'kg-pd-gallery-css';
+  st.textContent = '@keyframes kgPdFade{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}'
+    + '@media (max-width: 760px){.kg-pd-gallery{flex-direction:column-reverse}.kg-pd-thumbs{flex-direction:row!important;overflow-x:auto}}';
+  document.head.appendChild(st);
 })();
