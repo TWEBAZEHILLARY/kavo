@@ -360,6 +360,7 @@
     const cart = useCart();
     const auth = useAuth();
     const loggedIn = auth.isLoggedIn();
+    const inqUnread = window.useInquiryInbox ? window.useInquiryInbox().unread : 0;
     const openCat = (category) => ModalStore.open('catalogue', category ? { category } : null);
     const brandsRef = React.useRef(null);
     const trackOrder = () => {
@@ -399,7 +400,8 @@
             <div className="ka-actions" style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
               <button className="ka-action ka-action-track" aria-label="Track Order" title="Track Order" style={{ display: 'flex', alignItems: 'center', gap: 8, border: 'none', background: 'none', cursor: 'pointer', color: T.ink, fontFamily: F }} onClick={trackOrder}>
                 <Icon name="box" size={22} color={T.sub} /><div className="ka-action-label" style={{ textAlign: 'left' }}><div style={{ fontSize: 11, color: T.sub }}>Orders</div><div style={{ fontSize: 13.5, fontWeight: 700 }}>Track Order</div></div></button>
-              <button className="ka-action" aria-label={loggedIn ? 'Account' : 'Sign in'} title={loggedIn ? 'Account' : 'Sign in'} style={{ display: 'flex', alignItems: 'center', gap: 8, border: 'none', background: 'none', cursor: 'pointer', color: T.ink, fontFamily: F }} onClick={() => ModalStore.open('login')}>
+              <button className="ka-action" aria-label={loggedIn ? 'Account' : 'Sign in'} title={loggedIn ? (inqUnread ? `Account · ${inqUnread} new repl${inqUnread === 1 ? 'y' : 'ies'}` : 'Account') : 'Sign in'} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, border: 'none', background: 'none', cursor: 'pointer', color: T.ink, fontFamily: F }} onClick={() => ModalStore.open('login')}>
+                {loggedIn && inqUnread > 0 && <span aria-hidden="true" style={{ position: 'absolute', left: 15, top: -6, minWidth: 18, height: 18, borderRadius: 999, background: '#E5484D', color: '#fff', fontSize: 10.5, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', boxShadow: '0 0 0 2px #fff', zIndex: 1 }}>{inqUnread > 9 ? '9+' : inqUnread}</span>}
                 {loggedIn && auth.get().photoURL
                   ? <img src={auth.get().photoURL} alt="" referrerPolicy="no-referrer" style={{ width: 26, height: 26, borderRadius: 999, objectFit: 'cover', flexShrink: 0 }} />
                   : <Icon name="user" size={22} color={T.sub} />}<div className="ka-action-label" style={{ textAlign: 'left' }}><div style={{ fontSize: 11, color: T.sub }}>Account</div><div style={{ fontSize: 13.5, fontWeight: 700 }}>{loggedIn ? `Welcome, ${auth.get().firstName}` : 'Sign in'}</div></div></button>
