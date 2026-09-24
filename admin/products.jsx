@@ -17,6 +17,60 @@
     const editing = !!product;
     const blank = { id: '', name: '', sku: '', category: A_CATEGORIES[0], brand: '', regularPrice: '', salePrice: '', description: '', specs: '', stock: '', image: '', tags: [], featured: false, home_bested: false, imported: false, import_fee: 0, payment_terms: 'Advance Payment', deposit_pct: 50, icon: A_CAT_ICON[A_CATEGORIES[0]] };
     const [f, setF] = React.useState(product ? { ...blank, ...product, regularPrice: product.regularPrice ?? '', salePrice: product.salePrice ?? '', stock: product.stock ?? '' } : blank);
+    // Gallery: up to MAX_PHOTOS photos. The first one is the main image (kept in
+    // `image` too, so every existing thumbnail on the storefront keeps working).
+    const MAX_PHOTOS = 5;
+    const [photos, setPhotos] = React.useState(() => {
+      const arr = product && Array.isArray(product.images) ? product.images.filter(Boolean) : [];
+      if (arr.length) return arr.slice(0, MAX_PHOTOS);
+      return product && product.image ? [product.image] : [];
+    });
+    const [photoUrl, setPhotoUrl] = React.useState('');
+    const [busyPhotos, setBusyPhotos] = React.useState(false);
+    const compressPhoto = (file) => new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onerror = rej;
+      r.onload = () => {
+        if (/svg/i.test(file.type)) { res(r.result); return; }
+        const img = new Image();
+        img.onerror = rej;
+        img.onload = () => {
+          const k = Math.min(1, 1000 / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+          const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+          x.drawImage(img, 0, 0, c.width, c.height);
+          res(c.toDataURL('image/jpeg', 0.8));
+        };
+        img.src = r.result;
+      };
+      r.readAsDataURL(file);
+    });
+    const onPhotoFiles = async (e) => {
+      const files = Array.from(e.target.files || []).filter((x) => x.type.startsWith('image'));
+      e.target.value = '';
+      if (!files.length) return;
+      const room = MAX_PHOTOS - photos.length;
+      if (room <= 0) { ToastStore.push(`A product can have up to ${MAX_PHOTOS} photos. Remove one first.`, { title: 'Gallery full', icon: 'doc', tone: 'warn' }); return; }
+      if (files.length > room) ToastStore.push(`Only the first ${room} photo${room === 1 ? '' : 's'} were added — the gallery holds ${MAX_PHOTOS}.`, { title: 'Gallery limit', icon: 'doc', tone: 'warn' });
+      setBusyPhotos(true);
+      try {
+        const out = [];
+        for (const file of files.slice(0, room)) out.push(await compressPhoto(file));
+        setPhotos((p) => [...p, ...out].slice(0, MAX_PHOTOS));
+      } catch (err) {
+        ToastStore.push('One of those files could not be read.', { title: 'Upload failed', icon: 'minus', tone: 'error' });
+      }
+      setBusyPhotos(false);
+    };
+    const addPhotoUrl = () => {
+      const v = photoUrl.trim();
+      if (!v) return;
+      if (photos.length >= MAX_PHOTOS) { ToastStore.push(`A product can have up to ${MAX_PHOTOS} photos.`, { title: 'Gallery full', icon: 'doc', tone: 'warn' }); return; }
+      setPhotos((p) => [...p, v]); setPhotoUrl('');
+    };
+    const removePhoto = (i) => setPhotos((p) => p.filter((_, j) => j !== i));
+    const makeMain = (i) => setPhotos((p) => [p[i], ...p.filter((_, j) => j !== i)]);
     const [customTag, setCustomTag] = React.useState('');
     const [touched, setTouched] = React.useState(false);
     const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
@@ -42,7 +96,8 @@
       if (!valid) { ToastStore.push('Add a name, regular price and stock quantity.', { title: 'Check the form', icon: 'doc', tone: 'error' }); return; }
       const sku = f.sku.trim() || (f.brand.trim().slice(0, 3).toUpperCase() || 'PPS') + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
       const prod = {
-        ...f, id: f.id || A_uid('p'), sku, name: f.name.trim(), brand: f.brand.trim(),
+        ...f, images: photos.slice(0, MAX_PHOTOS), image: photos[0] || '',
+        id: f.id || A_uid('p'), sku, name: f.name.trim(), brand: f.brand.trim(),
         regularPrice: Number(f.regularPrice), salePrice: f.salePrice === '' ? null : Number(f.salePrice),
         stock: Number(f.stock), icon: f.icon || A_CAT_ICON[f.category] || 'box',
         home_bested: !!f.home_bested, imported: !!f.imported, import_fee: f.imported ? (Number(f.import_fee) || 0) : 0,
@@ -75,22 +130,34 @@
           <Field label="Description" full><Textarea rows={2} value={f.description} onChange={set('description')} placeholder="Short marketing description shown on the product page." /></Field>
           <Field label="Specifications" hint="one key: value per line" full><Textarea rows={3} value={f.specs} onChange={set('specs')} placeholder={'Rating: 63A\nPoles: 3P\nBreaking: 36kA'} /></Field>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label style={window.A_lbl}>Product image<span style={{ color: T.sub, fontWeight: 600 }}> · shown on the storefront &amp; table thumbnail</span></label>
-            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-              <Thumb p={{ image: f.image, icon: f.icon || A_CAT_ICON[f.category], category: f.category }} size={64} radius={12} />
-              <div style={{ flex: 1, display: 'grid', gap: 10, minWidth: 0 }}>
-                <Input value={uploaded ? '' : f.image} onChange={set('image')} placeholder="https://… image URL" disabled={uploaded} style={uploaded ? { background: T.surface, color: T.faint } : null} />
-                <label style={{ display: 'flex', alignItems: 'center', gap: 9, border: `1.5px dashed ${T.line}`, borderRadius: 11, padding: '10px 13px', cursor: 'pointer', background: T.surface, fontSize: 13, fontWeight: 700, color: T.sub }}>
-                  <Icon name="download" size={16} color={T.blue} stroke={2.2} />
-                  Upload image (or enter URL above)
-                  <input type="file" accept=".jpg,.jpeg,.png,.gif,.webp,.svg,image/*" onChange={onImageFile} style={{ display: 'none' }} />
-                </label>
-                {f.image && <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: T.sub }}>
-                  <span>{uploaded ? 'Uploaded image attached' : 'Using image URL'}</span>
-                  <button onClick={() => setF((s) => ({ ...s, image: '' }))} style={{ border: 'none', background: 'none', color: T.red, fontSize: 12, fontWeight: 800, cursor: 'pointer', fontFamily: F, padding: 0 }}>Remove</button>
-                </div>}
-              </div>
+            <label style={window.A_lbl}>Product photos<span style={{ color: T.sub, fontWeight: 600 }}> · up to {MAX_PHOTOS} · the first is the main image on the storefront &amp; table</span></label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+              {Array.from({ length: MAX_PHOTOS }).map((_, i) => {
+                const src = photos[i];
+                if (!src) {
+                  return (
+                    <label key={'e' + i} style={{ aspectRatio: '1 / 1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, border: `1.5px dashed ${T.line}`, borderRadius: 12, background: T.surface, cursor: i === photos.length ? 'pointer' : 'default', color: T.faint, fontSize: 11.5, fontWeight: 800, textAlign: 'center', padding: 6 }}>
+                      {i === photos.length ? <React.Fragment><Icon name="plus" size={18} color={T.blue} stroke={2.4} /><span style={{ color: T.sub }}>{busyPhotos ? 'Adding…' : 'Add photo'}</span>
+                        <input type="file" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.svg,image/*" onChange={onPhotoFiles} style={{ display: 'none' }} /></React.Fragment> : <span>{i + 1}</span>}
+                    </label>
+                  );
+                }
+                return (
+                  <div key={i + src.slice(-24)} style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 12, overflow: 'hidden', border: `1.5px solid ${i === 0 ? T.blue : T.line}`, background: '#fff' }}>
+                    <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+                    {i === 0
+                      ? <span style={{ position: 'absolute', left: 6, top: 6, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', color: '#fff', background: T.blue, padding: '3px 7px', borderRadius: 999 }}>Main</span>
+                      : <button onClick={() => makeMain(i)} title="Make this the main photo" style={{ position: 'absolute', left: 6, top: 6, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', color: T.ink, background: 'rgba(255,255,255,.92)', border: `1px solid ${T.line}`, padding: '3px 7px', borderRadius: 999, cursor: 'pointer', fontFamily: F }}>Set main</button>}
+                    <button onClick={() => removePhoto(i)} title="Remove photo" aria-label="Remove photo" style={{ position: 'absolute', right: 6, top: 6, width: 24, height: 24, borderRadius: 999, border: 'none', background: 'rgba(11,26,51,.78)', color: '#fff', fontSize: 14, lineHeight: '24px', fontWeight: 800, cursor: 'pointer', padding: 0, fontFamily: F }}>×</button>
+                  </div>
+                );
+              })}
             </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <Input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPhotoUrl(); } }} placeholder="…or paste an image URL" style={{ flex: 1 }} disabled={photos.length >= MAX_PHOTOS} />
+              <Button variant="ghost" icon="plus" onClick={addPhotoUrl}>Add URL</Button>
+            </div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: T.faint, marginTop: 6 }}>{photos.length}/{MAX_PHOTOS} photos · uploads are resized automatically · pick several files at once</div>
           </div>
 
           <div style={{ gridColumn: '1 / -1' }}>
