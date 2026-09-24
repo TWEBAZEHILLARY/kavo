@@ -270,18 +270,27 @@
       <React.Fragment>
         {media.map((m, i) => (
           m.type === 'video' ? (
-            <video key={m.id || i} ref={(el) => { vids.current[m.id || i] = el; }} src={m.src} muted autoPlay loop playsInline aria-hidden="true"
-              className={i === idx % media.length ? 'kg-cine-on' : ''}
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity 1.2s ease-in-out', zIndex: 0 }} />
+            // Whole frame visible (contain), over a soft blurred copy that fills
+            // the rest of the banner so there are no empty bars.
+            <div key={m.id || i} aria-hidden="true" style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0B1A33', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity 1.2s ease-in-out', zIndex: 0 }}>
+              <div style={{ position: 'absolute', inset: -40, backgroundImage: m.poster ? `url(${m.poster})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(28px) brightness(.55)' }} />
+              <video src={m.src} muted autoPlay loop playsInline tabIndex={-1}
+                style={{ position: 'absolute', inset: -40, width: 'calc(100% + 80px)', height: 'calc(100% + 80px)', objectFit: 'cover', filter: 'blur(28px) brightness(.55)' }} />
+              <video ref={(el) => { vids.current[m.id || i] = el; }} src={m.src} muted autoPlay loop playsInline
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
           ) : (
-            <div key={m.id || i} aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundImage: `url(${m.src})`, backgroundSize: 'cover', backgroundPosition: 'center', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity .9s ease-in-out', zIndex: 0 }} />
+            <div key={m.id || i} aria-hidden="true" style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0B1A33', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity .9s ease-in-out', zIndex: 0 }}>
+              <div style={{ position: 'absolute', inset: -40, backgroundImage: `url(${m.src})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(28px) brightness(.55)' }} />
+              <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${m.src})`, backgroundSize: 'contain', backgroundRepeat: 'no-repeat', backgroundPosition: 'center' }} />
+            </div>
           )
         ))}
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.4)', opacity: onVideoSlide ? 0 : 1, transition: 'opacity 1.2s ease', zIndex: 1 }} />
         {/* Cinematic treatment while a video plays: vignette + letterbox bars */}
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'radial-gradient(120% 90% at 50% 50%, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%)', opacity: onVideoSlide ? 1 : 0, transition: 'opacity 1.2s ease', zIndex: 1, pointerEvents: 'none' }} />
-        <div aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '11%', background: '#000', transform: onVideoSlide ? 'translateY(0)' : 'translateY(-101%)', transition: 'transform 1s cubic-bezier(.65,0,.35,1)', zIndex: 3, pointerEvents: 'none' }} />
-        <div aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '11%', background: '#000', transform: onVideoSlide ? 'translateY(0)' : 'translateY(101%)', transition: 'transform 1s cubic-bezier(.65,0,.35,1)', zIndex: 3, pointerEvents: 'none' }} />
+        <div aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '11%', background: '#000', transform: 'translateY(-101%)', transition: 'transform 1s cubic-bezier(.65,0,.35,1)', zIndex: 3, pointerEvents: 'none' }} />
+        <div aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '11%', background: '#000', transform: 'translateY(101%)', transition: 'transform 1s cubic-bezier(.65,0,.35,1)', zIndex: 3, pointerEvents: 'none' }} />
       </React.Fragment>
     );
   }
