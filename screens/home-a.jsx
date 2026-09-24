@@ -235,7 +235,7 @@
     );
   }
 
-  function HeroSlideshow() {
+  function HeroSlideshow({ onVideo }) {
     // Media is admin-managed: the admin console (Settings → Homepage hero media)
     // writes pps_hero_media — [{ id, type: 'image'|'video', src }]. Falls back
     // to the built-in 1.jpg … 11.jpg when the admin hasn't customised it yet.
@@ -248,6 +248,16 @@
       return Array.from({ length: DEFAULT_COUNT }, (_, i) => ({ id: 'default-' + (i + 1), type: 'image', src: (i + 1) + '.jpg' }));
     }, []);
     const [idx, setIdx] = React.useState(0);
+    const vids = React.useRef({});
+    const active = media.length ? media[idx % media.length] : null;
+    const onVideoSlide = !!active && active.type === 'video';
+    // Tell the banner a video is on screen (its words blur), and restart the
+    // clip from the top each time it comes round so it plays like a trailer.
+    React.useEffect(() => {
+      if (onVideo) onVideo(onVideoSlide);
+      const el = active && vids.current[active.id || idx % media.length];
+      if (el) { try { el.currentTime = 0; el.play(); } catch (e) {} }
+    }, [idx, media]);
     React.useEffect(() => {
       if (media.length < 2) return;
       // Photos rotate every 3s; videos get 8s of play before advancing.
@@ -260,13 +270,18 @@
       <React.Fragment>
         {media.map((m, i) => (
           m.type === 'video' ? (
-            <video key={m.id || i} src={m.src} muted autoPlay loop playsInline aria-hidden="true"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity .9s ease-in-out', zIndex: 0 }} />
+            <video key={m.id || i} ref={(el) => { vids.current[m.id || i] = el; }} src={m.src} muted autoPlay loop playsInline aria-hidden="true"
+              className={i === idx % media.length ? 'kg-cine-on' : ''}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity 1.2s ease-in-out', zIndex: 0 }} />
           ) : (
             <div key={m.id || i} aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundImage: `url(${m.src})`, backgroundSize: 'cover', backgroundPosition: 'center', opacity: i === idx % media.length ? 1 : 0, transition: 'opacity .9s ease-in-out', zIndex: 0 }} />
           )
         ))}
-        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 1 }} />
+        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.4)', opacity: onVideoSlide ? 0 : 1, transition: 'opacity 1.2s ease', zIndex: 1 }} />
+        {/* Cinematic treatment while a video plays: vignette + letterbox bars */}
+        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'radial-gradient(120% 90% at 50% 50%, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%)', opacity: onVideoSlide ? 1 : 0, transition: 'opacity 1.2s ease', zIndex: 1, pointerEvents: 'none' }} />
+        <div aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '11%', background: '#000', transform: onVideoSlide ? 'translateY(0)' : 'translateY(-101%)', transition: 'transform 1s cubic-bezier(.65,0,.35,1)', zIndex: 3, pointerEvents: 'none' }} />
+        <div aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '11%', background: '#000', transform: onVideoSlide ? 'translateY(0)' : 'translateY(101%)', transition: 'transform 1s cubic-bezier(.65,0,.35,1)', zIndex: 3, pointerEvents: 'none' }} />
       </React.Fragment>
     );
   }
@@ -334,6 +349,10 @@
 
   function HomeA() {
     const isMobile = useIsMobile();
+    const [heroVideo, setHeroVideo] = React.useState(false);
+    // While a hero video plays, the headline and sub-line soften out of focus
+    // so the footage reads like a film; they come back sharp on the next photo.
+    const heroBlur = { filter: heroVideo ? 'blur(7px)' : 'blur(0)', opacity: heroVideo ? 0.38 : 1, transition: 'filter 1.1s ease, opacity 1.1s ease' };
     const [drawer, setDrawer] = React.useState(false);
     const catBtnRef = React.useRef(null);
     React.useEffect(() => { if (!isMobile) setDrawer(false); }, [isMobile]);
@@ -410,13 +429,13 @@
               <Icon name={c.icon} size={19} color={T.blue} stroke={1.6} /><span style={{ flex: 1 }}>{c.name}</span><Icon name="chevron" size={14} color={T.sub} /></div>)}
           </div>
           <div className="ka-banner" style={{ borderRadius: 16, overflow: 'hidden', position: 'relative', background: `linear-gradient(120deg, ${T.blueDk}, ${T.blue})`, color: '#fff', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '54px 60px', minHeight: 392 }}>
-            <HeroSlideshow />
+            <HeroSlideshow onVideo={setHeroVideo} />
             <div className="ka-banner-deco" style={{ position: 'absolute', right: -40, top: -40, width: 320, height: 320, borderRadius: '50%', background: 'rgba(255,255,255,.07)' }} />
             <div className="ka-banner-deco" style={{ position: 'absolute', right: 60, bottom: -60, width: 220, height: 220, borderRadius: '50%', background: 'rgba(255,176,32,.16)' }} />
-            <Pill bg="rgba(255,255,255,.16)" color="#fff" style={{ alignSelf: 'flex-start', marginBottom: 16, position: 'relative', zIndex: 2 }}>Industrial Supply, Delivered</Pill>
-            <div className="ka-hero-h1" style={{ fontSize: 54, fontWeight: 800, lineHeight: 1.06, letterSpacing: -1.4, maxWidth: 620, position: 'relative', zIndex: 2 }}>Every component your project runs on.</div>
-            <div className="ka-hero-sub" style={{ fontSize: 19, color: 'rgba(255,255,255,.85)', margin: '16px 0 30px', maxWidth: 560, lineHeight: 1.5, position: 'relative', zIndex: 2 }}>Genuine ABB, Schneider & Siemens stock — priced in UGX, USD or EUR with same-day Kampala dispatch.</div>
-            <div className="ka-hero-ctas" style={{ display: 'flex', gap: 12, position: 'relative', zIndex: 2 }}>
+            <Pill bg="rgba(255,255,255,.16)" color="#fff" style={{ alignSelf: 'flex-start', marginBottom: 16, position: 'relative', zIndex: 2, ...heroBlur }}>Industrial Supply, Delivered</Pill>
+            <div className="ka-hero-h1" style={{ fontSize: 54, fontWeight: 800, lineHeight: 1.06, letterSpacing: -1.4, maxWidth: 620, position: 'relative', zIndex: 2, ...heroBlur }}>Every component your project runs on.</div>
+            <div className="ka-hero-sub" style={{ fontSize: 19, color: 'rgba(255,255,255,.85)', margin: '16px 0 30px', maxWidth: 560, lineHeight: 1.5, position: 'relative', zIndex: 2, ...heroBlur, transitionDelay: heroVideo ? '.15s' : '0s' }}>Genuine ABB, Schneider & Siemens stock — priced in UGX, USD or EUR with same-day Kampala dispatch.</div>
+            <div className="ka-hero-ctas" style={{ display: 'flex', gap: 12, position: 'relative', zIndex: 4 }}>
               <button style={{ background: T.amber, color: T.amberInk, border: 'none', padding: '15px 28px', borderRadius: 11, fontSize: 16, fontWeight: 800, cursor: 'pointer', fontFamily: F }} onClick={() => openCat()}>Shop catalog</button>
               <button style={{ background: 'rgba(255,255,255,.14)', color: '#fff', border: '1px solid rgba(255,255,255,.3)', padding: '15px 28px', borderRadius: 11, fontSize: 16, fontWeight: 700, cursor: 'pointer', fontFamily: F }} onClick={viewBrands}>View brands</button>
             </div>
@@ -528,4 +547,14 @@
     );
   }
   window.HomeA = HomeA;
+})();
+
+// Hero video "cinematic" push-in: a slow zoom while the clip is on screen.
+(function () {
+  if (document.getElementById('kg-cine-css')) return;
+  const st = document.createElement('style'); st.id = 'kg-cine-css';
+  st.textContent = '@keyframes kgCinePush{from{transform:scale(1.001)}to{transform:scale(1.09)}}'
+    + '.kg-cine-on{animation:kgCinePush 9s ease-out forwards}'
+    + '@media (prefers-reduced-motion: reduce){.kg-cine-on{animation:none}}';
+  document.head.appendChild(st);
 })();
