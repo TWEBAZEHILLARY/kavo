@@ -1096,6 +1096,7 @@
       [<MailIcon key="m" />, 'Email', 'kavogrid@gmail.com', 'mailto:kavogrid@gmail.com'],
       [<PhoneIcon key="p" />, 'Phone', '+256 764 250 125', 'tel:+256764250125'],
       [<Icon key="a" name="pin" size={18} color={T.blue} stroke={1.9} />, 'Visit us', 'Plot 14, Industrial Area, Kampala', null],
+      [<Icon key="b" name="doc" size={18} color={T.blue} stroke={1.9} />, 'Postal address', 'P.O. Box 219047, Kampala – Uganda', null],
     ];
 
     return (
@@ -1190,7 +1191,7 @@
     { h: '13. Governing Law', b: ['These terms shall be governed by and construed in accordance with the laws of Uganda.', 'Any disputes arising from these terms shall be subject to the exclusive jurisdiction of the courts of Uganda.'] },
     { h: '14. Changes to Terms', b: ['We reserve the right to update these Terms and Conditions at any time.', 'Changes will be effective immediately upon posting on our website.', 'Your continued use of our website constitutes acceptance of the updated terms.'] },
     { h: '15. Privacy Policy', b: ['Your privacy is important to us. Please review our Privacy Policy, which explains how we collect, use, and protect your personal information.', 'By using our website, you consent to the collection and use of your data as described in our Privacy Policy.'] },
-    { h: '16. Contact Information', b: ['If you have any questions about these Terms and Conditions, please contact us at:', 'Email: kavogrid@gmail.com', 'Phone/WhatsApp: +256764250125'] },
+    { h: '16. Contact Information', b: ['If you have any questions about these Terms and Conditions, please contact us at:', 'Email: kavogrid@gmail.com', 'Phone/WhatsApp: +256764250125', 'Postal address: P.O. Box 219047, Kampala – Uganda'] },
   ];
   function TermsModal() {
     return (
