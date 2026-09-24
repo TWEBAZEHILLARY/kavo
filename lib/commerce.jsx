@@ -412,6 +412,203 @@
     );
   }
 
+  // ── Inquiry conversations (client portal) ──
+  // Each inquiry in pps_inquiries can carry attachments [{ name, type, size, data }]
+  // and a thread [{ id, from: 'client'|'admin', text, at, attachments,
+  // readByClient, readByAdmin }]. The admin console replies into the same record;
+  // cloud sync carries it to the client's browser, where it shows under
+  // Account → My Inquiries with an unread badge and a toast.
+  const INQ_KEY = 'pps_inquiries';
+  const INQ_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.gif,.webp';
+  const INQ_MAX_BYTES = 2 * 1024 * 1024;
+  const InqStore = (() => {
+    const subs = new Set();
+    const read = () => { try { const r = JSON.parse(localStorage.getItem(INQ_KEY) || '[]'); return Array.isArray(r) ? r : []; } catch (e) { return []; } };
+    const emit = () => subs.forEach((f) => f());
+    window.addEventListener('pps-sync', (e) => { if (e.detail && e.detail.key === INQ_KEY) emit(); });
+    window.addEventListener('storage', (e) => { if (e.key === INQ_KEY) emit(); });
+    const norm = (v) => String(v || '').trim().toLowerCase();
+    const mine = (email) => { const em = norm(email); return em ? read().filter((q) => norm(q.email) === em) : []; };
+    const unread = (q) => (q.thread || []).filter((m) => m.from === 'admin' && !m.readByClient).length;
+    return {
+      read, mine, unread,
+      unreadFor: (email) => mine(email).reduce((n, q) => n + unread(q), 0),
+      update: (id, fn) => {
+        const list = read(); const i = list.findIndex((q) => q.id === id);
+        if (i < 0) return false;
+        list[i] = fn({ ...list[i] });
+        try { localStorage.setItem(INQ_KEY, JSON.stringify(list)); } catch (e) { return false; }
+        emit(); return true;
+      },
+      emit, sub: (f) => { subs.add(f); return () => subs.delete(f); },
+    };
+  })();
+  function useInquiryInbox() {
+    const auth = useAuth();
+    const u = auth.get();
+    const email = u && u.isLoggedIn ? u.email : '';
+    const [, bump] = React.useState(0);
+    React.useEffect(() => InqStore.sub(() => bump((n) => n + 1)), []);
+    return { email, list: InqStore.mine(email), unread: InqStore.unreadFor(email) };
+  }
+  const inqFileOk = (f) => {
+    if (!f) return false;
+    if (!/\.(pdf|docx?|xlsx?|csv|jpe?g|png|gif|webp)$/i.test(f.name)) { ToastStore.push('Use a PDF, Word, Excel, JPG or PNG file.', { title: 'File type not supported', icon: 'doc', tone: 'error' }); return false; }
+    if (f.size > INQ_MAX_BYTES) { ToastStore.push(`${f.name} is ${(f.size / 1048576).toFixed(1)} MB. Files must be 2 MB or smaller.`, { title: 'File too large', icon: 'doc', tone: 'error' }); return false; }
+    return true;
+  };
+  const readAttachment = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res({ name: f.name, type: f.type || '', size: f.size, data: r.result }); r.onerror = () => res(null); r.readAsDataURL(f); });
+  const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round((n || 0) / 1024)) + ' KB');
+  const downloadAttachment = (a) => { const l = document.createElement('a'); l.href = a.data; l.download = a.name || 'attachment'; document.body.appendChild(l); l.click(); l.remove(); };
+  const fileBadge = (name) => {
+    const e = String(name || '').split('.').pop().toLowerCase();
+    if (/^docx?$/.test(e)) return ['DOC', '#2B579A'];
+    if (/^(xlsx?|csv)$/.test(e)) return ['XLS', '#1D6F42'];
+    if (e === 'pdf') return ['PDF', '#D93025'];
+    return ['IMG', T.blue];
+  };
+  function AttachChip({ a, onRemove }) {
+    const [lb, c] = fileBadge(a.name);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: `1px solid ${T.line}`, borderRadius: 10, padding: '7px 9px', maxWidth: '100%', minWidth: 0 }}>
+        <span style={{ fontSize: 9.5, fontWeight: 800, color: '#fff', background: c, borderRadius: 5, padding: '4px 5px', flexShrink: 0, letterSpacing: 0.3 }}>{lb}</span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: T.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+          {a.size ? <div style={{ fontSize: 11, fontWeight: 600, color: T.sub }}>{fmtBytes(a.size)}</div> : null}
+        </div>
+        {a.data && !onRemove && <button onClick={() => downloadAttachment(a)} title="Download" aria-label={'Download ' + a.name} style={{ border: 'none', background: T.chip, borderRadius: 8, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}><Icon name="download" size={15} color={T.blue} stroke={2.2} /></button>}
+        {onRemove && <button onClick={onRemove} title="Remove" aria-label="Remove file" style={{ border: 'none', background: 'none', color: T.sub, cursor: 'pointer', display: 'flex', flexShrink: 0 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg></button>}
+      </div>
+    );
+  }
+  const inqLastAt = (q) => { const t = q.thread || []; return new Date(t.length ? t[t.length - 1].at : q.date).getTime() || 0; };
+  const inqWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+  const inqLegacy = (msg) => { const m = /^\[Attachment: ([^\]]+)\]\s*/.exec(msg || ''); return m ? { name: m[1], rest: msg.slice(m[0].length) } : null; };
+
+  function MyInquiriesModal() {
+    const { email, list } = useInquiryInbox();
+    const [openId, setOpenId] = React.useState((ModalStore.getData() || {}).id || null);
+    const [text, setText] = React.useState('');
+    const [files, setFiles] = React.useState([]);
+    const [busy, setBusy] = React.useState(false);
+    const fileRef = React.useRef(null);
+    const scrollRef = React.useRef(null);
+    const sorted = list.slice().sort((a, b) => inqLastAt(b) - inqLastAt(a));
+    const cur = openId ? list.find((q) => q.id === openId) : null;
+    const threadLen = cur ? (cur.thread || []).length : 0;
+    React.useEffect(() => {
+      if (cur && InqStore.unread(cur) > 0) InqStore.update(cur.id, (q) => ({ ...q, thread: (q.thread || []).map((m) => (m.from === 'admin' ? { ...m, readByClient: true } : m)) }));
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }, [openId, threadLen]);
+    const pick = (e) => {
+      const fs = Array.from(e.target.files || []).filter(inqFileOk); e.target.value = '';
+      setFiles((s) => [...s, ...fs].slice(0, 3));
+    };
+    const send = async () => {
+      if (!cur || busy) return;
+      if (!text.trim() && !files.length) { ToastStore.push('Write a message or attach a file.', { title: 'Empty message', icon: 'doc', tone: 'error' }); return; }
+      setBusy(true);
+      const atts = (await Promise.all(files.map(readAttachment))).filter(Boolean);
+      const msg = { id: 'm_' + Date.now().toString(36), from: 'client', text: text.trim(), at: new Date().toISOString(), attachments: atts, readByAdmin: false };
+      const ok = InqStore.update(cur.id, (q) => ({ ...q, thread: [...(q.thread || []), msg], status: q.status === 'Resolved' ? 'In Progress' : q.status }));
+      setBusy(false);
+      if (!ok) { ToastStore.push('Your browser storage is full. Try a smaller file.', { title: 'Could not send', icon: 'doc', tone: 'error' }); return; }
+      notifyAdmin(EMAILJS_INQUIRY_TEMPLATE_ID, { subject: 'Client reply on ' + cur.id + ' · ' + cur.subject, client_name: cur.clientName, client_email: cur.email, client_phone: cur.phone || '—', message: msg.text || '(file attached)', inquiry_id: cur.id });
+      setText(''); setFiles([]);
+      ToastStore.push('Your message was sent to the KAVO team.', { title: 'Message sent', icon: 'check', tone: 'ok' });
+    };
+    const statusC = { New: T.amberInk, 'In Progress': T.blue, Resolved: T.green };
+    const Bubble = ({ mine, who, when, children, atts, missing }) => (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start', gap: 5 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>{who} · {when}</div>
+        {children ? <div style={{ maxWidth: '82%', background: mine ? T.blue : '#fff', color: mine ? '#fff' : T.ink, border: mine ? 'none' : `1px solid ${T.line}`, borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px', padding: '11px 14px', fontSize: 14, fontWeight: 600, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{children}</div> : null}
+        {(atts && atts.length) || missing ? <div style={{ display: 'grid', gap: 6, maxWidth: '82%', width: 300 }}>
+          {(atts || []).map((a, i) => <AttachChip key={i} a={a} />)}
+          {missing && <AttachChip a={{ name: missing }} />}
+        </div> : null}
+      </div>
+    );
+    return (
+      <Overlay width={760} onClose={() => ModalStore.close()}>
+        <ModalHead title={cur ? cur.subject : 'My Inquiries'} sub={cur ? cur.id + ' · ' + (cur.status || 'New') : 'Replies from the KAVO team appear here'} onClose={() => ModalStore.close()} />
+        {!cur ? (
+          <div style={{ flex: '1 1 auto', overflowY: 'auto', padding: 22, background: T.surface }}>
+            {sorted.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 20px', background: '#fff', border: `1px solid ${T.line}`, borderRadius: 14 }}>
+                <Icon name="doc" size={30} color={T.sub} style={{ margin: '0 auto 10px' }} />
+                <div style={{ fontSize: 15.5, fontWeight: 800, color: T.ink }}>No inquiries yet</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.sub, marginTop: 4 }}>Inquiries you send while signed in as {email} will show here with our replies.</div>
+                <button onClick={() => ModalStore.open('inquiry')} style={{ marginTop: 16, border: 'none', background: T.amber, color: T.amberInk, padding: '11px 18px', borderRadius: 11, fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: F }}>Send an inquiry</button>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {sorted.map((q) => {
+                  const n = InqStore.unread(q);
+                  const t = q.thread || [];
+                  const last = t.length ? t[t.length - 1] : null;
+                  const preview = last ? ((last.from === 'admin' ? 'KAVO: ' : 'You: ') + (last.text || (last.attachments || []).map((a) => a.name).join(', '))) : (inqLegacy(q.message) ? inqLegacy(q.message).rest : q.message);
+                  return (
+                    <button key={q.id} onClick={() => setOpenId(q.id)} style={{ display: 'flex', alignItems: 'center', gap: 14, textAlign: 'left', width: '100%', cursor: 'pointer', fontFamily: F, background: '#fff', border: `1.5px solid ${n ? T.blue : T.line}`, borderRadius: 13, padding: '14px 16px' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: T.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.subject}</span>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: statusC[q.status] || T.sub, background: (statusC[q.status] || T.sub) + '1a', padding: '3px 9px', borderRadius: 999, flexShrink: 0 }}>{q.status || 'New'}</span>
+                        </div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: n ? T.ink : T.sub, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview}</div>
+                        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{q.id} · {t.length} repl{t.length === 1 ? 'y' : 'ies'}</div>
+                      </div>
+                      {n > 0 && <span style={{ minWidth: 22, height: 22, borderRadius: 999, background: T.red, color: '#fff', fontSize: 11.5, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', flexShrink: 0 }}>{n}</span>}
+                      <Icon name="arrowRight" size={17} color={T.sub} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <React.Fragment>
+            <div style={{ flex: '0 0 auto', padding: '10px 22px', borderBottom: `1px solid ${T.line}`, background: '#fff' }}>
+              <button onClick={() => setOpenId(null)} style={{ border: 'none', background: 'none', color: T.blue, fontSize: 13, fontWeight: 800, cursor: 'pointer', fontFamily: F, padding: '4px 0' }}>← All inquiries</button>
+            </div>
+            <div ref={scrollRef} style={{ flex: '1 1 auto', overflowY: 'auto', padding: 22, background: T.surface, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {(() => { const lg = inqLegacy(cur.message); return (
+                <Bubble mine who="You" when={inqWhen(cur.date)} atts={cur.attachments} missing={lg && !(cur.attachments || []).length ? lg.name : null}>{lg ? lg.rest : cur.message}</Bubble>
+              ); })()}
+              {(cur.thread || []).map((m) => (
+                <Bubble key={m.id} mine={m.from === 'client'} who={m.from === 'client' ? 'You' : 'KAVO team'} when={inqWhen(m.at)} atts={m.attachments}>{m.text}</Bubble>
+              ))}
+              {!(cur.thread || []).length && <div style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 700, color: T.sub, padding: '6px 0' }}>Our sourcing desk usually replies within 24 hours.</div>}
+            </div>
+            <div style={{ flex: '0 0 auto', borderTop: `1px solid ${T.line}`, padding: '12px 22px 16px', background: '#fff' }}>
+              {files.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>{files.map((f, i) => <div key={i} style={{ width: 230, maxWidth: '100%' }}><AttachChip a={f} onRemove={() => setFiles((s) => s.filter((_, j) => j !== i))} /></div>)}</div>}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                <input ref={fileRef} type="file" multiple hidden accept={INQ_ACCEPT} onChange={pick} />
+                <button onClick={() => fileRef.current && fileRef.current.click()} title="Attach PDF, Word, Excel or image" aria-label="Attach file" style={{ width: 44, height: 44, flexShrink: 0, border: `1.5px solid ${T.line}`, background: '#fff', borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Icon name="plus" size={18} color={T.blue} stroke={2.4} /></button>
+                <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder="Write a reply…" onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); }}
+                  style={{ flex: 1, minWidth: 0, border: `1.5px solid ${T.line}`, borderRadius: 11, padding: '11px 13px', fontSize: 14, fontFamily: F, color: T.ink, outline: 'none', resize: 'none', lineHeight: 1.45, boxSizing: 'border-box' }} />
+                <button onClick={send} disabled={busy} style={{ height: 44, flexShrink: 0, border: 'none', background: T.blue, color: '#fff', padding: '0 18px', borderRadius: 11, fontSize: 14, fontWeight: 800, cursor: busy ? 'default' : 'pointer', fontFamily: F, opacity: busy ? 0.6 : 1 }}>{busy ? 'Sending…' : 'Send'}</button>
+              </div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 7 }}>PDF, Word, Excel, JPG or PNG · up to 2 MB each</div>
+            </div>
+          </React.Fragment>
+        )}
+      </Overlay>
+    );
+  }
+
+  // Watches the signed-in client's inquiries and pops a toast when the KAVO team replies.
+  function InquiryNotifier() {
+    const { email, unread } = useInquiryInbox();
+    const prev = React.useRef(null);
+    React.useEffect(() => {
+      if (!email) { prev.current = null; return; }
+      const grew = prev.current === null ? unread > 0 : unread > prev.current;
+      if (grew) ToastStore.push(`You have ${unread} new repl${unread === 1 ? 'y' : 'ies'} from KAVO. Open Account → My Inquiries.`, { title: 'New reply to your inquiry', icon: 'doc', tone: 'info' });
+      prev.current = unread;
+    }, [email, unread]);
+    return null;
+  }
+
   // ── Inquiry modal ──
   function InquiryModal() {
     const svc = ModalStore.getData()?.service || null;
@@ -437,13 +634,14 @@
     const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
     // Phone is optional — name, valid email and the spec remain required.
     const valid = form.name.trim() && /.+@.+\..+/.test(form.email) && form.spec.trim();
-    const submit = () => {
+    const submit = async () => {
       setTouched(true);
       if (!valid) { ToastStore.push('Add your name, a valid email and the part spec.', { title: 'Check the form', icon: 'doc', tone: 'error' }); return; }
       const name = form.name.trim();
       const email = form.email.trim();
       const phone = (form.phone || '').trim();
       const message = form.spec.trim();
+      const att = file ? await readAttachment(file) : null;
       // Persist to pps_inquiries (shared with the admin Inquiries view).
       let rec = null;
       try {
@@ -455,11 +653,21 @@
           clientName: name, email, phone,
           date: new Date().toISOString().slice(0, 10),
           subject: svc ? ('Service inquiry — ' + svc) : 'Source a rare part',
-          message: (file ? '[Attachment: ' + file.name + '] ' : '') + message,
+          message: (file && !att ? '[Attachment: ' + file.name + '] ' : '') + message,
+          attachments: att ? [att] : [],
+          thread: [],
           status: 'New',
         };
         list.unshift(rec);
-        localStorage.setItem('pps_inquiries', JSON.stringify(list));
+        try { localStorage.setItem('pps_inquiries', JSON.stringify(list)); }
+        catch (qe) {
+          if (!att) throw qe;
+          // Storage full: keep the inquiry, drop the file body and note its name.
+          rec.attachments = []; rec.message = '[Attachment: ' + file.name + '] ' + message;
+          localStorage.setItem('pps_inquiries', JSON.stringify(list));
+          ToastStore.push('Your inquiry was sent, but the file was too large to store. Please email it to kavogrid@gmail.com.', { title: 'File not attached', icon: 'doc', tone: 'warn' });
+        }
+        InqStore.emit();
       } catch (e) { console.warn('[PPS] Could not save inquiry locally.', e); }
       // Notify the admin inbox (non-blocking — never interrupts the user flow).
       notifyAdmin(EMAILJS_INQUIRY_TEMPLATE_ID, {
@@ -468,7 +676,7 @@
         message, inquiry_id: rec ? rec.id : '',
       });
       ModalStore.close();
-      ToastStore.push(`Thanks ${name.split(' ')[0]} — our sourcing desk replies with a locked quote within 24h.`, { title: 'Inquiry sent', icon: 'check', tone: 'ok' });
+      ToastStore.push(`Thanks ${name.split(' ')[0]} — our sourcing desk replies with a locked quote within 24h.${AuthStore.isLoggedIn() ? ' Replies appear under Account → My Inquiries.' : ''}`, { title: 'Inquiry sent', icon: 'check', tone: 'ok' });
     };
     const fld = { width: '100%', border: `1.5px solid ${T.line}`, borderRadius: 11, padding: '12px 14px', fontSize: 14, fontFamily: F, color: T.ink, outline: 'none', background: '#fff', boxSizing: 'border-box' };
     const lbl = { fontSize: 13, fontWeight: 800, color: T.ink, marginBottom: 7, display: 'block' };
@@ -492,9 +700,9 @@
           <label style={lbl}>Datasheet or photo <span style={{ color: T.sub, fontWeight: 600 }}>(optional)</span></label>
           <div onClick={() => inputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
-            onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files[0]; if (f) setFile(f); }}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files[0]; if (inqFileOk(f)) setFile(f); }}
             style={{ border: `1.5px dashed ${drag ? T.blue : T.line}`, background: drag ? T.chip : T.surface, borderRadius: 12, padding: '18px', textAlign: 'center', cursor: 'pointer' }}>
-            <input ref={inputRef} type="file" hidden onChange={(e) => setFile(e.target.files[0] || null)} />
+            <input ref={inputRef} type="file" hidden accept={INQ_ACCEPT} onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (inqFileOk(f)) setFile(f); }} />
             {file ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }}>
                 <Icon name="doc" size={20} color={T.blue} />
@@ -506,7 +714,7 @@
               <div style={{ color: T.sub }}>
                 <Icon name="download" size={22} color={T.sub} style={{ margin: '0 auto 6px' }} />
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>Drop a file or click to upload</div>
-                <div style={{ fontSize: 12, marginTop: 2 }}>PDF, JPG or PNG</div>
+                <div style={{ fontSize: 12, marginTop: 2 }}>PDF, Word, Excel, JPG or PNG · up to 2 MB</div>
               </div>
             )}
           </div>
@@ -537,6 +745,7 @@
     const auth = useAuth();
     const loggedIn = auth.isLoggedIn();
     const user = auth.get();
+    const inbox = useInquiryInbox();
     const [tab, setTab] = React.useState('login');
     const [show, setShow] = React.useState({});
     const [touched, setTouched] = React.useState(false);
@@ -677,6 +886,10 @@
             <button onClick={() => { ModalStore.open('myOrders'); }}
               style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', background: T.blue, color: '#fff', padding: '13px', borderRadius: 11, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: F, marginBottom: 10, boxShadow: '0 6px 16px rgba(20,87,230,.3)' }}>
               <Icon name="box" size={17} color="#fff" stroke={2} /> My Orders &amp; Receipts</button>
+            <button onClick={() => { ModalStore.open('myInquiries'); }}
+              style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: `1.5px solid ${T.blue}`, background: '#fff', color: T.blue, padding: '12px', borderRadius: 11, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: F, marginBottom: 10 }}>
+              <Icon name="doc" size={17} color={T.blue} stroke={2} /> My Inquiries &amp; Replies
+              {inbox.unread > 0 && <span style={{ minWidth: 20, height: 20, borderRadius: 999, background: T.red, color: '#fff', fontSize: 11, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px' }}>{inbox.unread}</span>}</button>
             <button onClick={() => { const fn = user.firstName; auth.logout(); ModalStore.close(); ToastStore.push(`You've been signed out${fn ? ', ' + fn : ''}.`, { title: 'Signed out', icon: 'check', tone: 'warn' }); }}
               style={{ width: '100%', border: `1.5px solid ${T.line}`, background: '#fff', color: T.ink, padding: '13px', borderRadius: 11, fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: F }}>Log out</button>
           </div>
@@ -1767,10 +1980,12 @@
         {cur === 'productDetails' && <ProductModal />}
         {cur === 'orderTracking' && <OrderModal />}
         {cur === 'myOrders' && <MyOrdersModal />}
+        {cur === 'myInquiries' && <MyInquiriesModal />}
         {cur === 'help' && <HelpModal />}
         {cur === 'about' && <AboutModal />}
         {cur === 'terms' && <TermsModal />}
         <ToastHost />
+        <InquiryNotifier />
       </React.Fragment>
     );
   }
@@ -1783,7 +1998,7 @@
     document.head.appendChild(s);
   }
 
-  Object.assign(window, { CartStore, useCart, AuthStore, useAuth, ToastStore, ModalStore, CommerceHost, AddBtn,
+  Object.assign(window, { CartStore, useCart, AuthStore, useAuth, ToastStore, ModalStore, CommerceHost, AddBtn, useInquiryInbox,
     openProductDetails: (id) => ModalStore.open('productDetails', { id }) });
 })();
 
