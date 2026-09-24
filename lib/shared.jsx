@@ -285,11 +285,23 @@ function relatedFor(p) {
   return [...same, ...fill].slice(0, 6).map((x) => x.id);
 }
 
+// Admin "Specifications" field: one "Key: Value" per line. Lines without a
+// colon are kept as a single-cell note row.
+function parseSpecs(txt) {
+  return String(txt || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const i = l.indexOf(':');
+    return i > 0 ? { k: l.slice(0, i).trim(), v: l.slice(i + 1).trim() } : { k: '', v: l };
+  });
+}
+
 function productDetail(p) {
+  const adminDesc = String(p.description || '').trim();
   return {
     ...p,
     reviewsCount: p.reviews,
-    description: `Genuine ${p.brand} ${p.name.replace(p.brand + ' ', '')} — ${p.spec}. Supplied directly from authorised-distributor stock with full traceability and datasheet. Engineered for reliable industrial duty and ready for same-day dispatch from our Kampala warehouse.`,
+    specList: parseSpecs(p.specs),
+    adminDescription: adminDesc,
+    description: adminDesc || `Genuine ${p.brand} ${p.name.replace(p.brand + ' ', '')} — ${p.spec}. Supplied directly from authorised-distributor stock with full traceability and datasheet. Engineered for reliable industrial duty and ready for same-day dispatch from our Kampala warehouse.`,
     highlights: ['Secure Checkout', 'Free Fast Shipping', '30-Day Money-Back Guarantee'],
     reviews: productReviews(p),
     faqs: productFaqs(p),

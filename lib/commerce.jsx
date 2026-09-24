@@ -1076,7 +1076,17 @@
                 {p.was && <AnimatedPrice ugx={p.was} style={{ fontSize: 17, fontWeight: 600, color: T.sub, textDecoration: 'line-through', paddingBottom: 4 }} />}
                 {off > 0 && <span style={{ fontSize: 13, fontWeight: 800, color: T.red, background: '#FDECEC', padding: '5px 10px', borderRadius: 8, marginBottom: 3 }}>Save {off}%</span>}
               </div>
-              <div style={{ fontSize: 14, color: T.sub, fontWeight: 600, lineHeight: 1.55, marginBottom: 18 }}>{p.description}</div>
+              <div style={{ fontSize: 14, color: T.sub, fontWeight: 600, lineHeight: 1.55, marginBottom: 18, whiteSpace: 'pre-line', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.description}</div>
+              {p.specList && p.specList.filter((s) => s.k).length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8, marginBottom: 18 }}>
+                  {p.specList.filter((s) => s.k).slice(0, 4).map((s, i) => (
+                    <div key={i} style={{ border: `1px solid ${T.line}`, borderRadius: 10, padding: '9px 12px', minWidth: 0 }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 800, color: T.sub, letterSpacing: 0.5, textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.k}</div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: T.ink, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
                 {[['lock', 'Secure Checkout'], ['truck', 'Free Fast Shipping'], ['rotate', '30-Day Money-Back']].map(([ic, label]) => (
                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.surface, border: `1px solid ${T.line}`, borderRadius: 10, padding: '9px 13px' }}>
@@ -1089,6 +1099,28 @@
                 <AddToCartLg p={base} />
                 <BuyNowBtn p={base} />
               </div>
+            </div>
+          </div>
+
+          {/* description + specifications (from Admin → Products) */}
+          <div className="kg-pd-specs" style={{ padding: '26px 24px 4px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.15fr)', gap: 24, alignItems: 'start' }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: T.ink, letterSpacing: -0.4, marginBottom: 12 }}>Product Description</div>
+              <div style={{ fontSize: 14, color: T.ink, fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-line', textWrap: 'pretty' }}>{p.description}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: T.ink, letterSpacing: -0.4, marginBottom: 12 }}>Specifications</div>
+              <div style={{ border: `1px solid ${T.line}`, borderRadius: 13, overflow: 'hidden', background: '#fff' }}>
+                {[{ k: 'Brand', v: p.brand }, { k: 'SKU', v: p.sku }, { k: 'Category', v: p.category || p.cat }].filter((r) => r.v)
+                  .concat((p.specList || []).filter((s) => !/^(brand|sku|category)$/i.test(s.k)))
+                  .map((r, i) => (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: r.k ? 'minmax(110px, 38%) minmax(0, 1fr)' : '1fr', background: i % 2 ? '#fff' : T.surface, borderTop: i ? `1px solid ${T.line}` : 'none' }}>
+                      {r.k && <div style={{ padding: '11px 14px', fontSize: 13, fontWeight: 700, color: T.sub, borderRight: `1px solid ${T.line}` }}>{r.k}</div>}
+                      <div style={{ padding: '11px 14px', fontSize: 13.5, fontWeight: 700, color: T.ink, wordBreak: 'break-word', fontVariantNumeric: 'tabular-nums' }}>{r.v}</div>
+                    </div>
+                  ))}
+              </div>
+              {!(p.specList || []).length && <div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub, marginTop: 8 }}>Full datasheet available on request — ask our sourcing desk.</div>}
             </div>
           </div>
 
@@ -2008,5 +2040,13 @@
   const st = document.createElement('style'); st.id = 'kg-pd-gallery-css';
   st.textContent = '@keyframes kgPdFade{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}'
     + '@media (max-width: 760px){.kg-pd-gallery{flex-direction:column-reverse}.kg-pd-thumbs{flex-direction:row!important;overflow-x:auto}}';
+  document.head.appendChild(st);
+})();
+
+// Product details: description + specifications stack on phones.
+(function () {
+  if (document.getElementById('kg-pd-specs-css')) return;
+  const st = document.createElement('style'); st.id = 'kg-pd-specs-css';
+  st.textContent = '@media (max-width: 760px){.kg-pd-specs{grid-template-columns:1fr!important}}';
   document.head.appendChild(st);
 })();
