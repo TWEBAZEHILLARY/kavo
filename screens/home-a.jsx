@@ -494,7 +494,7 @@
           <div className="ka-footer-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr', gap: 30, paddingBottom: 28, borderBottom: '1px solid rgba(255,255,255,.12)' }}>
             <div>
               <div style={{ marginBottom: 12 }}><PPSLogo size={38} tile="#fff" peak={T.blue} cap={T.amber} text="#fff" sub="rgba(255,255,255,.6)" shadow={false} /></div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.6, maxWidth: 280 }}>Uganda's electrical supply marketplace — industrial, mechanical & domestic. Plot 14, Industrial Area, Kampala.</div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.6, maxWidth: 280 }}>Uganda's electrical supply marketplace — industrial, mechanical & domestic. Plot 14, Industrial Area, Kampala.<br />P.O. Box 219047, Kampala – Uganda.</div>
             </div>
             {[
               ['Shop', [
