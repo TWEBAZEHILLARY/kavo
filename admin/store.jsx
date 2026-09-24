@@ -294,6 +294,11 @@
     const subs = new Set();
     const emit = () => { state = { ...state }; subs.forEach((f) => f(state)); };
     const persist = (key) => write(KEYS[key], state[key]);
+    // Client replies arrive from the storefront (same browser or via cloud sync);
+    // reload inquiries so the console never overwrites a newer conversation.
+    const refreshInquiries = () => { state.inquiries = read(KEYS.inquiries, state.inquiries); emit(); };
+    window.addEventListener('pps-sync', (e) => { if (e.detail && e.detail.key === KEYS.inquiries) refreshInquiries(); });
+    window.addEventListener('storage', (e) => { if (e.key === KEYS.inquiries) refreshInquiries(); });
 
     // Keep at most `maxCount` products carrying `tagName`. Tagged products are kept
     // in array order (newest first); any beyond the cap (the oldest) have the tag
@@ -374,6 +379,23 @@
         persist('inquiries'); emit();
       },
       deleteInquiry: (id) => { state.inquiries = state.inquiries.filter((q) => q.id !== id); persist('inquiries'); emit(); },
+      // Append an admin message to an inquiry's conversation. Returns false if
+      // storage is full (large attachment) so the caller can warn.
+      replyInquiry: (id, msg) => {
+        const fresh = read(KEYS.inquiries, state.inquiries);
+        const next = fresh.map((q) => (q.id === id ? { ...q, thread: [...(q.thread || []), msg], status: q.status === 'New' ? 'In Progress' : q.status } : q));
+        try { localStorage.setItem(KEYS.inquiries, JSON.stringify(next)); } catch (e) { return false; }
+        state.inquiries = next; emit(); return true;
+      },
+      markInquirySeen: (id) => {
+        const fresh = read(KEYS.inquiries, state.inquiries);
+        let changed = false;
+        const next = fresh.map((q) => {
+          if (q.id !== id || !q.thread) return q;
+          return { ...q, thread: q.thread.map((m) => { if (m.from === 'client' && !m.readByAdmin) { changed = true; return { ...m, readByAdmin: true }; } return m; }) };
+        });
+        if (changed) { state.inquiries = next; persist('inquiries'); emit(); }
+      },
 
       // Quotes
       addQuote: (q) => { state.quotes = [q, ...state.quotes]; persist('quotes'); emit(); },
@@ -387,6 +409,9 @@
           items.push({ id: 'no_' + o.id, kind: 'order', refId: o.id, title: 'New order ' + o.id, who: o.clientName, date: o.date, read: readSet.has('no_' + o.id) }));
         state.inquiries.filter((q) => q.status === 'New').forEach((q) =>
           items.push({ id: 'ni_' + q.id, kind: 'inquiry', refId: q.id, title: 'New inquiry ' + q.id, who: q.clientName, date: q.date, read: readSet.has('ni_' + q.id) }));
+        state.inquiries.forEach((q) => (q.thread || []).forEach((m) => {
+          if (m.from === 'client' && !m.readByAdmin) items.push({ id: 'nm_' + m.id, kind: 'inquiry', refId: q.id, title: 'New reply on ' + q.id, who: q.clientName, date: m.at || q.date, read: readSet.has('nm_' + m.id) });
+        }));
         items.sort((a, b) => new Date(b.date) - new Date(a.date));
         return items;
       },

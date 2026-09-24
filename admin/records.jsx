@@ -336,32 +336,105 @@
   }
 
   // ═══════════════════════════════ INQUIRIES ═══════════════════════════════
+  // Attachments: [{ name, type, size, data }] on the inquiry and on each thread
+  // message. Older inquiries only recorded "[Attachment: name]" in the message
+  // text — those show the file name with a note that the file itself wasn't kept.
+  const INQ_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.gif,.webp';
+  const INQ_MAX = 2 * 1024 * 1024;
+  const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round((n || 0) / 1024)) + ' KB');
+  const dlAttachment = (a) => { const l = document.createElement('a'); l.href = a.data; l.download = a.name || 'attachment'; document.body.appendChild(l); l.click(); l.remove(); };
+  const legacyAttachment = (msg) => { const m = /^\[Attachment: ([^\]]+)\]\s*/.exec(msg || ''); return m ? { name: m[1], rest: msg.slice(m[0].length) } : null; };
+  const fileBadge = (name) => {
+    const e = String(name || '').split('.').pop().toLowerCase();
+    if (/^docx?$/.test(e)) return ['DOC', '#2B579A'];
+    if (/^(xlsx?|csv)$/.test(e)) return ['XLS', '#1D6F42'];
+    if (e === 'pdf') return ['PDF', '#D93025'];
+    return ['IMG', T.blue];
+  };
+  const whenOf = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+  const inqAttachCount = (q) => (q.attachments || []).length + (q.thread || []).reduce((n, m) => n + (m.attachments || []).length, 0) + (legacyAttachment(q.message) && !(q.attachments || []).length ? 1 : 0);
+  const inqUnreadAdmin = (q) => (q.thread || []).filter((m) => m.from === 'client' && !m.readByAdmin).length;
+
+  function FileChip({ a, onRemove }) {
+    const [lb, c] = fileBadge(a.name);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: `1px solid ${T.line}`, borderRadius: 10, padding: '8px 10px', minWidth: 0 }}>
+        <span style={{ fontSize: 9.5, fontWeight: 800, color: '#fff', background: c, borderRadius: 5, padding: '4px 5px', flexShrink: 0, letterSpacing: 0.3 }}>{lb}</span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: a.data ? T.sub : T.amberInk }}>{a.data ? fmtBytes(a.size) : 'File not stored (sent before downloads were enabled)'}</div>
+        </div>
+        {a.data && !onRemove && <Button variant="ghost" size="sm" icon="download" onClick={() => dlAttachment(a)}>Download</Button>}
+        {onRemove && <IconBtn icon="minus" tone="danger" title="Remove" onClick={onRemove} />}
+      </div>
+    );
+  }
+
   function InquiryModal({ inquiry, onClose }) {
     const d = useData();
     const q = d.inquiries.find((x) => x.id === inquiry.id) || inquiry;
     const [reply, setReply] = React.useState('');
+    const [files, setFiles] = React.useState([]);
+    const fileRef = React.useRef(null);
+    const scrollRef = React.useRef(null);
+    const threadLen = (q.thread || []).length;
+    React.useEffect(() => {
+      DataStore.markInquirySeen(q.id);
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }, [q.id, threadLen]);
+    const legacy = legacyAttachment(q.message);
+    const body = legacy ? legacy.rest : q.message;
+    const firstAtts = (q.attachments || []).length ? q.attachments : (legacy ? [{ name: legacy.name }] : []);
+    const pick = (e) => {
+      const list = Array.from(e.target.files || []); e.target.value = '';
+      list.forEach((f) => {
+        if (!/\.(pdf|docx?|xlsx?|csv|jpe?g|png|gif|webp)$/i.test(f.name)) { ToastStore.push(`${f.name}: use PDF, Word, Excel or an image.`, { title: 'File type not supported', icon: 'doc', tone: 'error' }); return; }
+        if (f.size > INQ_MAX) { ToastStore.push(`${f.name} is ${(f.size / 1048576).toFixed(1)} MB. Keep files to 2 MB or less.`, { title: 'File too large', icon: 'doc', tone: 'error' }); return; }
+        const r = new FileReader();
+        r.onload = () => setFiles((s) => [...s, { name: f.name, type: f.type || '', size: f.size, data: r.result }].slice(0, 3));
+        r.readAsDataURL(f);
+      });
+    };
     const send = () => {
-      if (!reply.trim()) { ToastStore.push('Write a reply before sending.', { title: 'Empty reply', icon: 'doc', tone: 'error' }); return; }
-      DataStore.setInquiryStatus(q.id, 'In Progress');
-      setReply('');
-      ToastStore.push(`Reply emailed to ${q.clientName}.`, { title: 'Reply sent', icon: 'check', tone: 'ok' });
+      if (!reply.trim() && !files.length) { ToastStore.push('Write a reply or attach a file before sending.', { title: 'Empty reply', icon: 'doc', tone: 'error' }); return; }
+      const ok = DataStore.replyInquiry(q.id, { id: A_uid('m_'), from: 'admin', text: reply.trim(), at: new Date().toISOString(), attachments: files, readByClient: false });
+      if (!ok) { ToastStore.push('Storage is full. Try a smaller attachment.', { title: 'Reply not sent', icon: 'doc', tone: 'error' }); return; }
+      setReply(''); setFiles([]);
+      ToastStore.push(`Reply sent to ${q.clientName}. They'll see it under Account → My Inquiries on the website.`, { title: 'Reply sent', icon: 'check', tone: 'ok' });
     };
     const resolve = () => { DataStore.setInquiryStatus(q.id, 'Resolved'); onClose(); ToastStore.push(`${q.id} marked resolved.`, { title: 'Inquiry resolved', icon: 'check', tone: 'ok' }); };
+    const Bubble = ({ admin, who, when, text, atts }) => (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: admin ? 'flex-end' : 'flex-start', gap: 5 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub }}>{who} · {when}</div>
+        {text ? <div style={{ maxWidth: '86%', background: admin ? T.blue : '#fff', color: admin ? '#fff' : T.ink, border: admin ? 'none' : `1px solid ${T.line}`, borderRadius: admin ? '13px 13px 4px 13px' : '13px 13px 13px 4px', padding: '11px 14px', fontSize: 14, fontWeight: 600, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div> : null}
+        {atts && atts.length ? <div style={{ display: 'grid', gap: 6, width: 360, maxWidth: '86%' }}>{atts.map((a, i) => <FileChip key={i} a={a} />)}</div> : null}
+      </div>
+    );
     return (
-      <Modal title={q.subject} sub={`${q.id} · ${q.clientName} · ${A_fmtDate(q.date)}`} width={580} onClose={onClose}
+      <Modal title={q.subject} sub={`${q.id} · ${q.clientName} · ${A_fmtDate(q.date)}`} width={640} onClose={onClose}
         footer={<React.Fragment>
           <Button variant="ghost" onClick={onClose}>Close</Button>
           {q.status !== 'Resolved' && <Button variant="accent" icon="check" onClick={resolve}>Mark resolved</Button>}
           <Button variant="primary" icon="arrowRight" onClick={send}>Send reply</Button>
         </React.Fragment>}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <Avatar name={q.clientName} /><div><div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>{q.clientName}</div><div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub }}>{q.email}</div></div>
+          <Avatar name={q.clientName} /><div><div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>{q.clientName}</div><div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub }}>{q.email}{q.phone ? ' · ' + q.phone : ''}</div></div>
           <div style={{ flex: 1 }} /><Pill status={q.status} />
         </div>
-        <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 12, padding: '14px 16px', fontSize: 14, color: T.ink, fontWeight: 600, lineHeight: 1.55, marginBottom: 18 }}>{q.message}</div>
-        <Field label="Your reply" hint="simulated email"><Textarea rows={4} value={reply} onChange={(e) => setReply(e.target.value)} placeholder={`Hi ${q.clientName.split(' ')[0]}, thanks for reaching out…`} /></Field>
-        <button onClick={() => { onClose(); Router.go('quotes', { attach: q.clientName }); }} style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 8, border: `1.5px dashed ${T.line}`, background: '#fff', borderRadius: 11, padding: '10px 14px', cursor: 'pointer', fontFamily: F, fontSize: 13, fontWeight: 800, color: T.blue }}>
-          <Icon name="doc" size={16} color={T.blue} />Attach a quote from Quotes</button>
+        <div ref={scrollRef} style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14, marginBottom: 18, maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Bubble who={q.clientName} when={A_fmtDate(q.date)} text={body} atts={firstAtts} />
+          {(q.thread || []).map((m) => <Bubble key={m.id} admin={m.from === 'admin'} who={m.from === 'admin' ? 'KAVO team' : q.clientName} when={whenOf(m.at)} text={m.text} atts={m.attachments} />)}
+        </div>
+        <Field label="Your reply" hint="the client sees this in their account"><Textarea rows={4} value={reply} onChange={(e) => setReply(e.target.value)} placeholder={`Hi ${q.clientName.split(' ')[0]}, thanks for reaching out…`} /></Field>
+        {files.length > 0 && <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>{files.map((f, i) => <FileChip key={i} a={f} onRemove={() => setFiles((s) => s.filter((_, j) => j !== i))} />)}</div>}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
+          <input ref={fileRef} type="file" multiple hidden accept={INQ_ACCEPT} onChange={pick} />
+          <button onClick={() => fileRef.current && fileRef.current.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: `1.5px dashed ${T.line}`, background: '#fff', borderRadius: 11, padding: '10px 14px', cursor: 'pointer', fontFamily: F, fontSize: 13, fontWeight: 800, color: T.blue }}>
+            <Icon name="plus" size={16} color={T.blue} />Attach Word, Excel, PDF or image</button>
+          <button onClick={() => { onClose(); Router.go('quotes', { attach: q.clientName }); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, border: `1.5px dashed ${T.line}`, background: '#fff', borderRadius: 11, padding: '10px 14px', cursor: 'pointer', fontFamily: F, fontSize: 13, fontWeight: 800, color: T.blue }}>
+            <Icon name="doc" size={16} color={T.blue} />Attach a quote from Quotes</button>
+        </div>
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: T.faint, marginTop: 7 }}>Up to 3 files per reply · 2 MB each</div>
       </Modal>
     );
   }
@@ -399,7 +472,9 @@
                 <Td>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.subject}</div>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: 'tabular-nums' }}>{it.id}</div>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: T.sub, fontVariantNumeric: 'tabular-nums', display: 'flex', gap: 8, alignItems: 'center' }}>{it.id}
+                      {inqAttachCount(it) > 0 && <span>· {inqAttachCount(it)} file{inqAttachCount(it) === 1 ? '' : 's'}</span>}
+                      {inqUnreadAdmin(it) > 0 && <span style={{ color: '#fff', background: T.red, borderRadius: 999, padding: '1px 7px', fontSize: 10.5, fontWeight: 800 }}>{inqUnreadAdmin(it)} new repl{inqUnreadAdmin(it) === 1 ? 'y' : 'ies'}</span>}</div>
                   </div>
                 </Td>
                 <Td><span style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{it.clientName}</span></Td>
