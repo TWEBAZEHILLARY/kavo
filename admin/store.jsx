@@ -548,6 +548,36 @@
   })();
   function useHeroMedia() { const [l, set] = React.useState(HeroMedia.get()); React.useEffect(() => HeroMedia.sub(set), []); return l; }
 
+  // ── Coming soon (admin-owned) ──────────────────────────────────────────
+  // pps_coming_soon: [{ id, name, line, label, tone, image }]. Shown as the
+  // homepage "Coming soon" slider — no price, no cart. Launching an item moves
+  // it into pps_products, where it gets a price and cart like any product.
+  const CS_KEY = 'pps_coming_soon';
+  const ComingSoon = (() => {
+    const subs = new Set();
+    let list = (() => { try { const r = JSON.parse(localStorage.getItem(CS_KEY)); return Array.isArray(r) ? r : []; } catch (e) { return []; } })();
+    const persistC = () => { try { localStorage.setItem(CS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; } };
+    const emitC = () => { list = list.slice(); subs.forEach((f) => f(list)); };
+    return {
+      get: () => list,
+      save: (item) => {
+        const prev = list;
+        const i = list.findIndex((x) => x.id === item.id);
+        list = i >= 0 ? list.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : [...list, { ...item, id: uid('cs_'), addedAt: new Date().toISOString() }];
+        if (!persistC()) { list = prev; return false; }
+        emitC(); return true;
+      },
+      remove: (id) => { list = list.filter((x) => x.id !== id); persistC(); emitC(); },
+      move: (id, dir) => {
+        const i = list.findIndex((x) => x.id === id), j = i + dir;
+        if (i < 0 || j < 0 || j >= list.length) return;
+        const a = list.slice(); [a[i], a[j]] = [a[j], a[i]]; list = a; persistC(); emitC();
+      },
+      sub: (f) => { subs.add(f); return () => subs.delete(f); },
+    };
+  })();
+  function useComingSoon() { const [l, set] = React.useState(ComingSoon.get()); React.useEffect(() => ComingSoon.sub(set), []); return l; }
+
   // ── Toast store ─────────────────────────────────────────────────────────
   const ToastStore = (() => {
     let list = []; let id = 0; const subs = new Set();
@@ -580,6 +610,7 @@
     DataStore, useData, ToastStore, useToasts, Router, useRouter,
     CurrencyRates, useCurrencyRates, A_DEFAULT_RATES: DEFAULT_RATES,
     HeroMedia, useHeroMedia, A_DEFAULT_HERO_MEDIA: DEFAULT_HERO_MEDIA,
+    ComingSoon, useComingSoon,
     DeliveryFee, useDeliveryFee, A_DEFAULT_DELIVERY: DEFAULT_DELIVERY,
     ReceiptStore, useReceipts,
   });

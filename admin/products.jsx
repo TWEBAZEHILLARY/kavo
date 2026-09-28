@@ -13,16 +13,118 @@
     'Deposit Payment': 'Client pays a deposit at checkout; the balance is settled on delivery.',
   };
 
-  function ProductModal({ product, onClose }) {
+  // ── Coming soon manager ── items live in pps_coming_soon (see store.jsx).
+  const CS_TONES = { pearl: ['Pearl', '#FFFFFF', '#E6EAF0'], ice: ['Ice blue', '#F4F8FF', '#D6E2F7'], sand: ['Sand', '#FFFAF1', '#EFE1C4'], mint: ['Mint', '#F3FBF7', '#D3EBDD'], slate: ['Slate', '#F3F5F8', '#CDD5E0'] };
+  const CS_LABELS = ['None', 'NEW ARRIVAL', 'COMING TO KAVO GRID'];
+  const csCompress = (file) => new Promise((res, rej) => {
+    const r = new FileReader(); r.onerror = rej;
+    r.onload = () => {
+      const img = new Image(); img.onerror = rej;
+      img.onload = () => {
+        const png = /png|webp/i.test(file.type);
+        const k = Math.min(1, 1400 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        const x = c.getContext('2d'); if (!png) { x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); }
+        x.drawImage(img, 0, 0, c.width, c.height);
+        res(png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = r.result;
+    };
+    r.readAsDataURL(file);
+  });
+  function ComingSoonModal({ onClose, onLaunch }) {
+    const items = window.useComingSoon();
+    const blankCS = { id: '', name: '', line: '', label: 'NEW ARRIVAL', tone: 'pearl', image: '' };
+    const [f, setF] = React.useState(blankCS);
+    const [busy, setBusy] = React.useState(false);
+    const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+    const onFile = async (e) => {
+      const file = e.target.files && e.target.files[0]; e.target.value = '';
+      if (!file || !file.type.startsWith('image')) return;
+      setBusy(true);
+      try { const src = await csCompress(file); setF((s) => ({ ...s, image: src })); }
+      catch (err) { ToastStore.push('That file could not be read.', { title: 'Upload failed', icon: 'minus', tone: 'error' }); }
+      setBusy(false);
+    };
+    const save = () => {
+      if (!f.name.trim() || !f.image) { ToastStore.push('Add a product name and photo.', { title: 'Check the form', icon: 'doc', tone: 'error' }); return; }
+      const ok = window.ComingSoon.save({ ...f, name: f.name.trim(), line: f.line.trim(), label: f.label === 'None' ? '' : f.label });
+      if (!ok) { ToastStore.push('Storage is full — use a smaller photo or remove an item.', { title: 'Could not save', icon: 'minus', tone: 'error' }); return; }
+      ToastStore.push(`${f.name.trim()} ${f.id ? 'updated' : 'added'} — showing in the homepage Coming soon slider.`, { title: 'Coming soon saved', icon: 'check', tone: 'ok' });
+      setF(blankCS);
+    };
+    const del = (it) => ConfirmStore.open({ title: 'Remove from Coming soon?', body: `${it.name} will no longer show on the homepage.`, confirmLabel: 'Remove', danger: true, onConfirm: () => { window.ComingSoon.remove(it.id); if (f.id === it.id) setF(blankCS); } });
+    const tone = CS_TONES[f.tone] || CS_TONES.pearl;
+    return (
+      <Modal title="Coming soon" sub="Homepage slider — no price or cart until you launch the item to the shop" width={760} onClose={onClose}
+        footer={<React.Fragment>
+          {f.id && <Button variant="ghost" onClick={() => setF(blankCS)}>Cancel edit</Button>}
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button variant="primary" icon="check" onClick={save}>{f.id ? 'Save changes' : 'Add to Coming soon'}</Button>
+        </React.Fragment>}>
+        <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', gap: 18 }}>
+          <label style={{ position: 'relative', aspectRatio: '1 / 1', borderRadius: 14, overflow: 'hidden', border: `1.5px dashed ${f.image ? 'transparent' : T.line}`, background: `radial-gradient(120% 90% at 70% 40%, ${tone[1]}, ${tone[2]})`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            {f.image
+              ? <img src={f.image} alt="" style={{ width: '82%', height: '82%', objectFit: 'contain', mixBlendMode: 'multiply' }} />
+              : <div style={{ textAlign: 'center', color: T.sub, fontSize: 12.5, fontWeight: 800, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}><Icon name="plus" size={20} color={T.blue} stroke={2.4} />{busy ? 'Adding…' : 'Upload product photo'}<span style={{ fontWeight: 600, fontSize: 11.5 }}>PNG with transparent or white background works best</span></div>}
+            {f.image && <span style={{ position: 'absolute', right: 8, bottom: 8, fontSize: 11, fontWeight: 800, color: T.ink, background: 'rgba(255,255,255,.92)', border: `1px solid ${T.line}`, padding: '4px 9px', borderRadius: 999 }}>Replace</span>}
+            <input type="file" accept=".jpg,.jpeg,.png,.webp,image/*" onChange={onFile} style={{ display: 'none' }} />
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignContent: 'start' }}>
+            <Field label="Product name" full><Input value={f.name} onChange={set('name')} placeholder="Solar Inverter 5kVA Hybrid" /></Field>
+            <Field label="Supporting line" hint="short category or benefit" full><Input value={f.line} onChange={set('line')} placeholder="Pure sine wave · Built-in MPPT charger" /></Field>
+            <Field label="Small label"><Select value={f.label || 'None'} onChange={(v) => setF((s) => ({ ...s, label: v }))} options={CS_LABELS} /></Field>
+            <Field label="Backdrop">
+              <div style={{ display: 'flex', gap: 8, height: 44, alignItems: 'center' }}>
+                {Object.entries(CS_TONES).map(([k, [nm, a, b]]) => (
+                  <button key={k} title={nm} aria-label={nm} onClick={() => setF((s) => ({ ...s, tone: k }))}
+                    style={{ width: 32, height: 32, borderRadius: 999, cursor: 'pointer', padding: 0, background: `linear-gradient(135deg, ${a}, ${b})`, border: f.tone === k ? `2px solid ${T.blue}` : `1.5px solid ${T.line}`, boxShadow: f.tone === k ? `0 0 0 3px ${T.blueWash}` : 'none' }} />
+                ))}
+              </div>
+            </Field>
+          </div>
+        </div>
+        <div style={{ marginTop: 22, borderTop: `1px solid ${T.line}`, paddingTop: 16 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: T.ink, marginBottom: 10 }}>On the homepage · {items.length} item{items.length === 1 ? '' : 's'}</div>
+          {items.length === 0
+            ? <div style={{ border: `1px dashed ${T.line}`, borderRadius: 12, padding: '22px 16px', textAlign: 'center', color: T.sub, fontSize: 13.5, fontWeight: 700, background: T.surface }}>No coming-soon products yet. The homepage section stays hidden until you add one.</div>
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {items.map((it, i) => {
+                const tn = CS_TONES[it.tone] || CS_TONES.pearl;
+                return (
+                  <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 12, border: `1px solid ${f.id === it.id ? T.blue : T.line}`, borderRadius: 12, padding: '8px 10px', background: '#fff' }}>
+                    <div style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', flexShrink: 0, background: `linear-gradient(135deg, ${tn[1]}, ${tn[2]})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <img src={it.image} alt="" style={{ width: '86%', height: '86%', objectFit: 'contain', mixBlendMode: 'multiply' }} /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: T.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{[it.label, it.line].filter(Boolean).join(' · ') || '—'}</div>
+                    </div>
+                    <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                      <IconBtn icon="chevronDown" title="Move down" onClick={() => window.ComingSoon.move(it.id, 1)} />
+                      <IconBtn icon="doc" tone="blue" title="Edit" onClick={() => setF({ ...blankCS, ...it, label: it.label || 'None' })} />
+                      <IconBtn icon="minus" tone="danger" title="Remove" onClick={() => del(it)} />
+                      <Button size="sm" icon="cart" onClick={() => onLaunch(it)}>Launch to shop</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+        </div>
+      </Modal>
+    );
+  }
+
+  function ProductModal({ product, prefill, onSaved, onClose }) {
     const editing = !!product;
     const blank = { id: '', name: '', sku: '', category: A_CATEGORIES[0], brand: '', regularPrice: '', salePrice: '', description: '', specs: '', stock: '', image: '', tags: [], featured: false, home_bested: false, imported: false, import_fee: 0, payment_terms: 'Advance Payment', deposit_pct: 50, icon: A_CAT_ICON[A_CATEGORIES[0]] };
-    const [f, setF] = React.useState(product ? { ...blank, ...product, regularPrice: product.regularPrice ?? '', salePrice: product.salePrice ?? '', stock: product.stock ?? '' } : blank);
+    const [f, setF] = React.useState(product ? { ...blank, ...product, regularPrice: product.regularPrice ?? '', salePrice: product.salePrice ?? '', stock: product.stock ?? '' } : { ...blank, ...(prefill || {}) });
     // Gallery: up to MAX_PHOTOS photos. The first one is the main image (kept in
     // `image` too, so every existing thumbnail on the storefront keeps working).
     const MAX_PHOTOS = 5;
     const [photos, setPhotos] = React.useState(() => {
       const arr = product && Array.isArray(product.images) ? product.images.filter(Boolean) : [];
       if (arr.length) return arr.slice(0, MAX_PHOTOS);
+      if (!product && prefill && prefill.image) return [prefill.image];
       return product && product.image ? [product.image] : [];
     });
     const [photoUrl, setPhotoUrl] = React.useState('');
@@ -106,6 +208,7 @@
         rating: f.rating || 4.5, reviews: f.reviews || 0,
       };
       DataStore.saveProduct(prod);
+      if (onSaved) onSaved(prod);
       onClose();
       ToastStore.push(`${prod.name} ${editing ? 'updated' : 'added'} — live on the storefront.`, { title: editing ? 'Product saved' : 'Product added', icon: 'check', tone: 'ok' });
     };
@@ -247,6 +350,8 @@
     const [cat, setCat] = React.useState('All');
     const [editing, setEditing] = React.useState(null); // product | 'new' | null
     const [importing, setImporting] = React.useState(false);
+    const [soonOpen, setSoonOpen] = React.useState(false);
+    const [launching, setLaunching] = React.useState(null);
 
     const list = d.products.filter((p) => {
       if (cat !== 'All' && p.category !== cat) return false;
@@ -273,6 +378,7 @@
         <PageHead title="Products" sub={`${d.products.length} items · single source of truth for the storefront catalogue`}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Button icon="plus" onClick={() => setEditing('new')}>Add product</Button>
+            <Button variant="ghost" icon="clock" onClick={() => setSoonOpen(true)}>Coming soon</Button>
             <Button variant="ghost" icon="download" onClick={() => setImporting(true)}>Bulk import</Button>
           </div>
         </PageHead>
@@ -351,6 +457,9 @@
 
         {importing && window.AdminBulkImportModal && <window.AdminBulkImportModal onClose={() => setImporting(false)} />}
         {editing && <ProductModal product={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+        {soonOpen && !launching && <ComingSoonModal onClose={() => setSoonOpen(false)} onLaunch={(it) => setLaunching(it)} />}
+        {launching && <ProductModal product={null} prefill={{ name: launching.name, description: launching.line || '', image: launching.image, tags: ['New Arrival'] }}
+          onSaved={() => window.ComingSoon.remove(launching.id)} onClose={() => setLaunching(null)} />}
       </div>
     );
   }
