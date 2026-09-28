@@ -80,7 +80,7 @@
 
   // CHANGE 3 & 4 — generic horizontal product carousel: responsive visible count,
   // arrows (slide one card), autoplay every 4s pausing on hover, and dot indicators.
-  function Carousel({ items, emptyMsg, accent, flame }) {
+  function Carousel({ items, emptyMsg, accent, flame, render }) {
     const wrapRef = React.useRef(null);
     const [visible, setVisible] = React.useState(4);
     const [w, setW] = React.useState(0);
@@ -127,7 +127,7 @@
           <div style={{ display: 'flex', gap, transform: `translateX(${-start * step}px)`, transition: 'transform .45s cubic-bezier(.22,.61,.36,1)' }}>
             {items.map((p) => (
               <div key={p.id} style={{ flex: `0 0 ${cardW}px`, maxWidth: cardW }}>
-                <Card p={p} w="100%" flame={flame} />
+                {render ? render(p) : <Card p={p} w="100%" flame={flame} />}
               </div>
             ))}
           </div>
@@ -356,6 +356,36 @@
     );
   }
 
+  // Homepage "Coming soon" slider — admin-managed (Products → Coming soon),
+  // stored in pps_coming_soon. No price or cart: items only get those once the
+  // admin launches them into the catalogue.
+  const CS_TONES = { pearl: ['#FFFFFF', '#E6EAF0'], ice: ['#F4F8FF', '#D6E2F7'], sand: ['#FFFAF1', '#EFE1C4'], mint: ['#F3FBF7', '#D3EBDD'], slate: ['#F3F5F8', '#CDD5E0'] };
+  const csWa = (name) => 'https://wa.me/256764250125?text=' + encodeURIComponent(`Hello KAVO GRID, I would like to request a booking for "${name}" (Coming Soon). Please notify me as soon as it is available.`);
+  function ComingSoonCard({ it }) {
+    const [a, b] = CS_TONES[it.tone] || CS_TONES.pearl;
+    return (
+      <div style={{ width: '100%', background: '#fff', border: `1px solid ${T.line}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ position: 'relative', height: 168, background: `radial-gradient(90% 120% at 50% 40%, ${a}, ${b})`, borderBottom: `1px solid ${T.line}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div aria-hidden="true" style={{ position: 'absolute', left: '26%', right: '26%', bottom: 14, height: 12, borderRadius: '50%', background: 'radial-gradient(closest-side, rgba(11,26,51,.22), rgba(11,26,51,0))' }} />
+          <img src={it.image} alt={it.name} style={{ position: 'relative', width: '78%', height: '82%', objectFit: 'contain', mixBlendMode: 'multiply' }} />
+          <span style={{ position: 'absolute', top: 10, left: 10, background: T.ink, color: '#fff', fontSize: 10.5, fontWeight: 800, letterSpacing: 1.2, padding: '5px 10px', borderRadius: 999 }}>COMING SOON</span>
+        </div>
+        <div style={{ padding: '13px 14px 15px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+          {it.label && <div style={{ fontSize: 11.5, fontWeight: 800, color: T.blue, letterSpacing: 0.4, textTransform: 'uppercase' }}>{it.label}</div>}
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, lineHeight: 1.32, margin: '5px 0 4px' }}>{it.name}</div>
+          {it.line && <div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub, lineHeight: 1.45 }}>{it.line}</div>}
+          <div style={{ marginTop: 'auto', paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <a href={csWa(it.name)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: T.ink, color: '#fff', textDecoration: 'none', padding: '11px 14px', borderRadius: 11, fontSize: 14, fontWeight: 800 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="#25D366" aria-hidden="true"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22c5.46 0 9.91-4.45 9.91-9.91C21.95 6.45 17.5 2 12.04 2zm5.8 14.02c-.24.68-1.42 1.3-1.95 1.35-.5.05-.97.23-3.27-.68-2.77-1.09-4.52-3.93-4.66-4.11-.13-.18-1.1-1.47-1.1-2.8 0-1.33.7-1.99.95-2.26.25-.27.54-.34.72-.34h.52c.17 0 .39-.06.61.46.23.54.77 1.87.84 2 .07.14.11.3.02.48-.09.18-.14.3-.27.46-.14.16-.29.36-.41.48-.14.14-.28.28-.12.56.16.27.71 1.17 1.52 1.9 1.05.93 1.93 1.22 2.2 1.36.27.14.43.11.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.23.61-.14.25.09 1.58.75 1.85.88.27.14.45.2.52.32.07.11.07.66-.17 1.33z" /></svg>
+              Notify Me</a>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.sub, textAlign: 'center' }}>Launching Soon • Stay Tuned</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function HomeA() {
     const isMobile = useIsMobile();
     const [heroVideo, setHeroVideo] = React.useState(false);
@@ -384,7 +414,7 @@
     // the admin's array order (newest first, since the admin unshifts new items), so
     // slicing the first 8 yields the newest 8. If fewer are tagged, all show; if none,
     // the Carousel renders its emptyMsg.
-    const POPULAR = PRODUCTS.filter((p) => hasTag(p, 'Popular this week')).slice(0, 8);
+    const COMING_SOON = (() => { try { const r = JSON.parse(localStorage.getItem('pps_coming_soon')); return Array.isArray(r) ? r.filter((x) => x && x.image && x.name) : []; } catch (e) { return []; } })();
     const FLASH = PRODUCTS.filter((p) => hasTag(p, 'Flash Deals')).slice(0, 8);
     return (
       <div style={{ fontFamily: F, background: '#fff', color: T.ink, width: '100%', WebkitFontSmoothing: 'antialiased' }}>
@@ -480,14 +510,20 @@
           </div>
         </div>
 
-        {/* featured products */}
-        <div className="ka-gut" style={{ padding: '34px 40px 0' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
-            <div style={{ fontSize: 23, fontWeight: 800, letterSpacing: -0.5 }}>Popular this week</div>
-            <span style={{ fontSize: 14, fontWeight: 700, color: T.blue, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={() => openCat()}>View all <Icon name="arrowRight" size={16} color={T.blue} /></span>
+        {/* coming soon */}
+        {COMING_SOON.length > 0 && <div className="ka-gut" style={{ padding: '34px 40px 0' }}>
+          <div style={{ border: `1px solid ${T.line}`, borderRadius: 18, overflow: 'hidden' }}>
+            <div className="ka-flash-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', background: `linear-gradient(90deg, ${T.chip}, ${T.surface})`, borderBottom: `1px solid ${T.line}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: T.ink, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="clock" size={23} color="#fff" /></div>
+                <div><div style={{ fontSize: 21, fontWeight: 800, letterSpacing: -0.4 }}>Coming Soon</div><div style={{ fontSize: 13, color: T.sub, fontWeight: 600 }}>Coming to KAVO GRID — tap Notify Me to book yours</div></div>
+              </div>
+            </div>
+            <div className="ka-flash-body" style={{ padding: 20 }}>
+              <Carousel items={COMING_SOON} emptyMsg="" accent={T.ink} render={(it) => <ComingSoonCard it={it} />} />
+            </div>
           </div>
-          <Carousel items={POPULAR} emptyMsg="No popular items at the moment." accent={T.blue} />
-        </div>
+        </div>}
 
         {/* RFQ banner */}
         <div className="ka-gut" style={{ padding: '34px 40px 0' }}>
