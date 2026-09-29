@@ -15,12 +15,12 @@
 // this browser. Without the secret, all keys are writable (fine to start with).
 
 const ALL_KEYS = new Set([
-  'pps_hero_media', 'pps_products', 'pps_currency_rates',
+  'pps_hero_media', 'pps_products', 'pps_currency_rates', 'pps_coming_soon',
   'pps_orders', 'pps_inquiries', 'pps_clients', 'pps_quotes',
   'pps_quotations', 'pps_seq_quotations', 'pps_seq_quote_files',
   'pps_deliveries', 'pps_lpos', 'pps_notifications', 'pps_users'
 ]);
-const ADMIN_ONLY = new Set(['pps_hero_media', 'pps_products', 'pps_currency_rates', 'pps_users', 'pps_seq_quotations', 'pps_seq_quote_files']);
+const ADMIN_ONLY = new Set(['pps_hero_media', 'pps_coming_soon', 'pps_products', 'pps_currency_rates', 'pps_users', 'pps_seq_quotations', 'pps_seq_quote_files']);
 const MAX_BYTES = 4 * 1024 * 1024; // D1 row limit is ~1MB per value; hero media is stored as URLs so this is generous
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
