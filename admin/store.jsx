@@ -576,6 +576,33 @@
       sub: (f) => { subs.add(f); return () => subs.delete(f); },
     };
   })();
+  // Upload a data-URL photo to the site database (/api/img) and return its
+  // short URL; falls back to the data URL when the API isn't reachable.
+  async function csUpload(dataUrl) {
+    if (!dataUrl || !/^data:image\//.test(dataUrl) || location.protocol === 'file:') return dataUrl;
+    const id = 'cs' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const h = { 'content-type': 'application/json' };
+    try { const t = localStorage.getItem('pps_sync_token'); if (t) h['x-admin-token'] = t; } catch (e) {}
+    try {
+      const r = await fetch('/api/img/' + id, { method: 'PUT', headers: h, body: JSON.stringify({ data: dataUrl }) });
+      if (!r.ok) return dataUrl;
+      const d = await r.json(); return (d && d.url) || dataUrl;
+    } catch (e) { return dataUrl; }
+  }
+  ComingSoon.upload = csUpload;
+  // Move any photos still stored inline (older items) to the database so the
+  // list is small enough to sync to every visitor.
+  setTimeout(async () => {
+    const inline = ComingSoon.get().filter((x) => /^data:/.test(x.image || ''));
+    for (const it of inline) {
+      const url = await csUpload(it.image);
+      if (url !== it.image) ComingSoon.save({ ...it, image: url });
+    }
+  }, 5000);
+  window.addEventListener('pps-sync-error', (e) => {
+    const d = e.detail || {};
+    if (window.ToastStore) window.ToastStore.push(`Live site did not accept "${d.key}" (error ${d.status}).`, { title: 'Sync failed', icon: 'minus', tone: 'error' });
+  });
   function useComingSoon() { const [l, set] = React.useState(ComingSoon.get()); React.useEffect(() => ComingSoon.sub(set), []); return l; }
 
   // ── Toast store ─────────────────────────────────────────────────────────

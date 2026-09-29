@@ -48,9 +48,12 @@
       catch (err) { ToastStore.push('That file could not be read.', { title: 'Upload failed', icon: 'minus', tone: 'error' }); }
       setBusy(false);
     };
-    const save = () => {
+    const save = async () => {
       if (!f.name.trim() || !f.image) { ToastStore.push('Add a product name and photo.', { title: 'Check the form', icon: 'doc', tone: 'error' }); return; }
-      const ok = window.ComingSoon.save({ ...f, name: f.name.trim(), line: f.line.trim(), label: f.label === 'None' ? '' : f.label });
+      setBusy(true);
+      const image = await window.ComingSoon.upload(f.image);
+      setBusy(false);
+      const ok = window.ComingSoon.save({ ...f, image, name: f.name.trim(), line: f.line.trim(), label: f.label === 'None' ? '' : f.label });
       if (!ok) { ToastStore.push('Storage is full — use a smaller photo or remove an item.', { title: 'Could not save', icon: 'minus', tone: 'error' }); return; }
       ToastStore.push(`${f.name.trim()} ${f.id ? 'updated' : 'added'} — showing in the homepage Coming soon slider.`, { title: 'Coming soon saved', icon: 'check', tone: 'ok' });
       setF(blankCS);
