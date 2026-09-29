@@ -30,8 +30,10 @@ let tableReady = false;
 async function ensureTable(db) {
   if (tableReady) return;
   await db.prepare('CREATE TABLE IF NOT EXISTS sync (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
+  await db.prepare('CREATE TABLE IF NOT EXISTS imgs (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
   tableReady = true;
 }
+const IMG_MAX = 1500000; // one image per D1 row, well under the row limit
 
 export default {
   async fetch(request, env) {
@@ -43,6 +45,29 @@ export default {
 
     try {
       await ensureTable(env.DB);
+      // Images (e.g. Coming soon photos) are stored one per row and served as
+      // real files, so the synced JSON only carries short /api/img/<id> URLs.
+      const im = url.pathname.match(/^\/api\/img\/([a-z0-9_]+)$/);
+      if (im) {
+        if (request.method === 'GET') {
+          const row = await env.DB.prepare('SELECT mime, data FROM imgs WHERE id = ?').bind(im[1]).first();
+          if (!row) return new Response('Not found', { status: 404 });
+          const bin = atob(row.data), bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          return new Response(bytes, { headers: { 'content-type': row.mime, 'cache-control': 'public, max-age=31536000, immutable' } });
+        }
+        if (request.method === 'PUT' || request.method === 'POST') {
+          if (env.ADMIN_TOKEN && request.headers.get('x-admin-token') !== env.ADMIN_TOKEN) return json({ error: 'Admin token required' }, 401);
+          let body; try { body = await request.json(); } catch (e) { return json({ error: 'Bad JSON' }, 400); }
+          const mm = typeof body.data === 'string' && body.data.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
+          if (!mm) return json({ error: 'data must be a base64 image data URL' }, 400);
+          if (mm[2].length > IMG_MAX) return json({ error: 'Image too large' }, 413);
+          await env.DB.prepare('INSERT INTO imgs (id, mime, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = excluded.updated_at')
+            .bind(im[1], mm[1], mm[2], Date.now()).run();
+          return json({ url: '/api/img/' + im[1] });
+        }
+        return json({ error: 'Method not allowed' }, 405);
+      }
       const m = url.pathname.match(/^\/api\/sync(?:\/([a-z0-9_]+))?$/);
       if (!m) return json({ error: 'Not found' }, 404);
       const key = m[1];
