@@ -65,24 +65,29 @@
   // ════════════════════════════════ CLIENTS ════════════════════════════════
   function ClientsReport({ d }) {
     const [q, setQ] = React.useState('');
+    const L = window.KG_useLedger();
+    const receipts = window.useReceipts();
+    const quotes = window.useQuotes ? window.useQuotes() : [];
+    const deliveries = window.useDeliveries ? window.useDeliveries() : [];
     const rows = React.useMemo(() => {
       const valid = d.orders.filter((o) => o.status !== 'Cancelled');
       return d.clients.map((c) => {
         const mine = valid.filter((o) => o.clientId === c.id);
-        return { c, count: mine.length, spent: mine.reduce((s, o) => s + o.total, 0) };
-      }).sort((a, b) => b.spent - a.spent);
-    }, [d.clients, d.orders]);
+        const h = window.KG_clientHistory(c, d, L, quotes, deliveries, receipts);
+        return { c, count: mine.length, spent: mine.reduce((s, o) => s + o.total, 0), h };
+      }).sort((a, b) => (b.h.delivered + b.spent) - (a.h.delivered + a.spent));
+    }, [d, L, quotes, deliveries, receipts]);
     const term = q.trim().toLowerCase();
     const filtered = term ? rows.filter((r) => (r.c.name + ' ' + r.c.email + ' ' + r.c.phone).toLowerCase().includes(term)) : rows;
     const exp = () => downloadCSV('client-list.csv',
-      ['Client', 'Email', 'Phone', 'Status', 'Orders', 'Total Spent (UGX)'],
-      filtered.map((r) => [r.c.name, r.c.email, r.c.phone, r.c.status, r.count, plain(r.spent)]));
+      ['Client', 'Email', 'Phone', 'Status', 'Orders', 'Total Spent (UGX)', 'Quotations', 'Deliveries', 'Quoted (UGX)', 'Delivered (UGX)', 'Paid (UGX)', 'Outstanding (UGX)'],
+      filtered.map((r) => [r.c.name, r.c.email, r.c.phone, r.c.status, r.count, plain(r.spent), r.h.quotes.length, r.h.deliveries.length, plain(r.h.quoted), plain(r.h.delivered), plain(r.h.paid), plain(r.h.outstanding)]));
     return (
-      <ReportSection title="Client List" sub={`${filtered.length} client${filtered.length === 1 ? '' : 's'} · order count & lifetime spend`}
+      <ReportSection title="Client List" sub={`${filtered.length} client${filtered.length === 1 ? '' : 's'} · orders, deliveries, payments & balance`}
         controls={<Search value={q} onChange={setQ} placeholder="Search name, email…" width={240} />}
         onExport={exp} exportDisabled={!filtered.length}>
         {filtered.length === 0 ? <Empty title="No clients match" sub="Try another search term." /> : (
-          <Table columns={[{ label: 'Client' }, { label: 'Contact' }, { label: 'Status' }, { label: 'Orders', align: 'right' }, { label: 'Total Spent', align: 'right' }]}>
+          <Table columns={[{ label: 'Client' }, { label: 'Contact' }, { label: 'Status' }, { label: 'Orders', align: 'right' }, { label: 'Total Spent', align: 'right' }, { label: 'Delivered', align: 'right' }, { label: 'Paid', align: 'right' }, { label: 'Outstanding', align: 'right' }]}>
             {filtered.map((r, i) => (
               <Row key={r.c.id} i={i}>
                 <Td><div style={{ fontWeight: 800 }}>{r.c.name}</div><div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 2 }}>{r.c.address}</div></Td>
@@ -90,6 +95,9 @@
                 <Td><Pill status={r.c.status} small /></Td>
                 <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{r.count}</Td>
                 <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{A_money(r.spent)}</Td>
+                <Td align="right" style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{A_money(r.h.delivered)}<div style={{ fontSize: 11.5, color: T.sub, fontWeight: 600 }}>{r.h.deliveries.length} note{r.h.deliveries.length === 1 ? '' : 's'} · {r.h.quotes.length} quote{r.h.quotes.length === 1 ? '' : 's'}</div></Td>
+                <Td align="right" style={{ fontWeight: 700, color: T.green, fontVariantNumeric: 'tabular-nums' }}>{A_money(r.h.paid)}</Td>
+                <Td align="right" style={{ fontWeight: 800, color: r.h.outstanding > 0 ? T.red : T.ink, fontVariantNumeric: 'tabular-nums' }}>{A_money(r.h.outstanding)}</Td>
               </Row>
             ))}
           </Table>

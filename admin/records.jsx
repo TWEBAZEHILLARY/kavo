@@ -24,6 +24,9 @@
     const [tab, setTab] = React.useState('details');
     const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
     const orders = d.orders.filter((o) => o.clientId === client.id);
+    const hist = window.KG_useClientHistory ? window.KG_useClientHistory(isNew ? null : client) : null;
+    const [hFilter, setHFilter] = React.useState('All');
+    const [payInv, setPayInv] = React.useState(null);
 
     const save = () => {
       if (readOnly) { ToastStore.push('Only admins can add or edit clients.', { title: 'Access denied', icon: 'lock', tone: 'error' }); return; }
@@ -47,7 +50,7 @@
     const roCss = readOnly ? { background: T.surface, color: T.sub } : null;
 
     return (
-      <Modal title={isNew ? 'Add Client' : clientLabel(client)} sub={isNew ? 'New client record' : (client.email || client.contactPerson || '')} width={580} onClose={onClose}
+      <Modal title={isNew ? 'Add Client' : clientLabel(client)} sub={isNew ? 'New client record' : (client.email || client.contactPerson || '')} width={tab === 'history' ? 820 : 580} onClose={onClose}
         footer={tab === 'details'
           ? (readOnly
               ? <React.Fragment><div style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 800, color: T.sub }}><Icon name="lock" size={15} color={T.sub} stroke={2} />View only — editing is admin-only</div><Button variant="ghost" onClick={onClose}>Close</Button></React.Fragment>
@@ -55,7 +58,7 @@
           : <Button variant="ghost" onClick={onClose}>Close</Button>}>
         {!isNew && (
           <div style={{ display: 'flex', borderBottom: `1px solid ${T.line}`, margin: '-22px -22px 20px' }}>
-            <Tab id="details">Details</Tab><Tab id="orders">Order history · {orders.length}</Tab>
+            <Tab id="details">Details</Tab><Tab id="orders">Order history · {orders.length}</Tab>{hist && <Tab id="history">Account history</Tab>}
           </div>
         )}
         {tab === 'details' ? (
@@ -70,6 +73,8 @@
             <Field label="Status"><Select value={f.status} onChange={(v) => setF((s) => ({ ...s, status: v }))} options={['Active', 'Suspended']} /></Field>
             {!isNew && <Field label="Created"><Input value={A_fmtDate(f.createdAt || f.registered)} disabled style={{ background: T.surface, color: T.sub }} /></Field>}
           </div>
+        ) : tab === 'history' && hist ? (
+          <ClientHistoryPanel h={hist} filter={hFilter} setFilter={setHFilter} onPay={setPayInv} onOrder={(o) => { onClose(); Router.go('orders', { focus: o.id }); }} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {orders.length === 0 ? <Empty icon="cart" title="No orders yet" /> : orders.sort((a, b) => new Date(b.date) - new Date(a.date)).map((o) => (
@@ -82,7 +87,79 @@
             ))}
           </div>
         )}
+        {payInv && window.KG_RecordPaymentModal && (() => { const PM = window.KG_RecordPaymentModal; const cur = hist && hist.invoices.find((i) => i.key === payInv); return cur ? <PM inv={cur} onClose={() => setPayInv(null)} /> : null; })()}
       </Modal>
+    );
+  }
+
+  // Account history for one client: quotations, deliveries, orders, payments.
+  function ClientHistoryPanel({ h, filter, setFilter, onPay, onOrder }) {
+    const fmt = window.KG_fmtLedger || ((n) => A_money(n)), PayPill = window.KG_PayPill;
+    const invOf = {}; h.invoices.forEach((i) => { invOf[i.key] = i; });
+    const ev = [];
+    h.quotes.forEach((q) => ev.push({ kind: 'Quotations', icon: 'doc', date: q.date || String(q.createdAt || '').slice(0, 10), title: 'Quotation ' + q.number,
+      sub: `${(q.items || []).filter((it) => String(it.description || '').trim()).length} item lines${q.status ? ' · ' + q.status : ''}`, amount: fmt(window.Q_totalsOf(q).grand, q.currency || 'UGX') }));
+    h.deliveries.forEach((x) => { const inv = invOf['dn:' + x.id];
+      ev.push({ kind: 'Deliveries', icon: 'truck', date: String(x.deliveredAt || x.date || '').slice(0, 10), title: 'Delivery ' + x.number,
+        sub: [x.fromQuote ? 'Quotation ' + x.fromQuote : 'No quotation', inv && inv.parts > 1 ? `delivery ${inv.part} of ${inv.parts}` : '', x.status].filter(Boolean).join(' · '),
+        amount: inv && inv.total > 0 ? fmt(inv.total, inv.currency) : '', inv, status: inv ? inv.status : x.status }); });
+    h.orders.forEach((o) => { const inv = invOf['order:' + o.id];
+      ev.push({ kind: 'Orders', icon: 'cart', date: String(o.date || '').slice(0, 10), title: 'Order ' + o.id, sub: `${(o.items || []).length} items · ${o.status}`, amount: A_money(o.total), inv, status: inv ? inv.status : o.status, order: o }); });
+    h.receipts.forEach((r) => ev.push({ kind: 'Payments', icon: 'check', date: String(r.date || '').slice(0, 10), title: 'Receipt ' + r.number,
+      sub: [r.method, r.reference, r.orderId ? 'for ' + r.orderId : ''].filter(Boolean).join(' · '), amount: A_money(r.amountPaid), paid: true, receipt: r }));
+    ev.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const counts = { All: ev.length }; ev.forEach((e) => { counts[e.kind] = (counts[e.kind] || 0) + 1; });
+    const shown = filter === 'All' ? ev : ev.filter((e) => e.kind === filter);
+    const open = h.invoices.filter((i) => i.status !== 'Paid');
+    const tiles = [['Quoted', A_money(h.quoted), T.ink], ['Delivered', A_money(h.delivered), T.ink], ['Paid', A_money(h.paid), T.green], ['Outstanding', A_money(h.outstanding), h.outstanding > 0 ? T.red : T.ink]];
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+          {tiles.map(([k, v, c]) => (
+            <div key={k} style={{ border: `1px solid ${T.line}`, borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase', letterSpacing: 0.4 }}>{k}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: c, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        {open.length > 0 && (
+          <div style={{ border: `1px solid ${T.line}`, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', background: T.surface, fontSize: 12, fontWeight: 800, color: T.sub, textTransform: 'uppercase', letterSpacing: 0.4 }}>Awaiting payment · {open.length}</div>
+            {open.map((i) => (
+              <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderTop: `1px solid ${T.lineSoft}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{i.ref}{i.quote && <span style={{ fontWeight: 700, color: T.sub }}> · {i.quote}</span>}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.sub }}>{A_fmtDate(i.date)} · {i.age} day{i.age === 1 ? '' : 's'}</div>
+                </div>
+                <strong style={{ fontSize: 13.5, color: T.red, fontVariantNumeric: 'tabular-nums' }}>{i.total > 0 ? fmt(i.balance, i.currency) : 'Enter amount'}</strong>
+                {PayPill && <PayPill status={i.status} />}
+                <Button size="sm" variant="primary" icon="check" onClick={() => onPay(i.key)}>Record payment</Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['All', 'Quotations', 'Deliveries', 'Orders', 'Payments'].map((k) => (
+            <button key={k} onClick={() => setFilter(k)} style={{ padding: '7px 13px', borderRadius: 999, border: `1.5px solid ${filter === k ? T.blue : T.line}`, background: filter === k ? T.blue : '#fff', color: filter === k ? '#fff' : T.ink, fontFamily: F, fontSize: 12.5, fontWeight: 800, cursor: 'pointer' }}>{k} · {counts[k] || 0}</button>
+          ))}
+        </div>
+        {shown.length === 0 ? <Empty icon="doc" title="Nothing here yet" /> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {shown.map((e, n) => (
+              <div key={n} onClick={e.order ? () => onOrder(e.order) : undefined} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', border: `1px solid ${T.line}`, borderRadius: 12, cursor: e.order ? 'pointer' : 'default' }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: e.paid ? T.greenWash : T.surface, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name={e.icon} size={16} color={e.paid ? T.green : T.sub} stroke={2} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{e.title}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{A_fmtDate(e.date)}{e.sub ? ' · ' + e.sub : ''}</div>
+                </div>
+                {e.amount && <strong style={{ fontSize: 13.5, color: e.paid ? T.green : T.ink, fontVariantNumeric: 'tabular-nums' }}>{e.paid ? '+ ' : ''}{e.amount}</strong>}
+                {e.inv && PayPill ? <PayPill status={e.inv.status} /> : e.status ? <Pill status={e.status} small /> : null}
+                {e.receipt && window.KG_printReceipt && <IconBtn icon="download" tone="blue" title="Print receipt" onClick={(ev2) => { ev2.stopPropagation && ev2.stopPropagation(); window.KG_printReceipt(e.receipt); }} />}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 

@@ -363,7 +363,13 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
     // Instalments against one delivery share a sourceKey: only the latest counts.
     const latest = {};
     list.forEach((r) => { if (r.sourceKey && (!latest[r.sourceKey] || (r.savedAt || '') > (latest[r.sourceKey].savedAt || ''))) latest[r.sourceKey] = r; });
-    const outstanding = list.filter((r) => !r.sourceKey || latest[r.sourceKey] === r).reduce((s, r) => s + balOf(r), 0);
+    // A receipt linked to a delivery / order takes its balance from that
+    // account (0 = Paid). Only the latest receipt on an account shows it.
+    const led = window.KG_useLedger ? window.KG_useLedger() : { linkOf: {}, byKey: {} };
+    const lastOn = {};
+    list.forEach((r) => { const k = led.linkOf[r.id]; if (k && (!lastOn[k] || ((r.date || '') + (r.savedAt || '')) > ((lastOn[k].date || '') + (lastOn[k].savedAt || '')))) lastOn[k] = r; });
+    const rowBal = (r) => { const k = led.linkOf[r.id], inv = k && led.byKey[k]; if (!inv) return balOf(r); return lastOn[k] === r ? inv.balance : 0; };
+    const outstanding = list.reduce((s, r) => s + rowBal(r), 0);
 
     const del = (r) => ConfirmStore.open({
       title: 'Delete receipt', sub: r.number + ' · ' + r.clientName, confirmLabel: 'Delete', danger: true,
@@ -395,16 +401,18 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
           <Card><Empty icon="doc" title={list.length ? 'No matching receipts' : 'No receipts yet'}
             sub={list.length ? 'Try a different search term.' : 'Click “New receipt” to record a payment and print it as a PDF.'} /></Card>
         ) : (
-          <Table columns={[{ label: 'Receipt' }, { label: 'Client' }, { label: 'Date' }, { label: 'Method' }, { label: 'Total', align: 'right' }, { label: 'Balance', align: 'right' }, { label: '', align: 'right' }]}>
+          <Table columns={[{ label: 'Receipt' }, { label: 'Client' }, { label: 'Date' }, { label: 'Method' }, { label: 'For' }, { label: 'Total', align: 'right' }, { label: 'Status', align: 'right' }, { label: '', align: 'right' }]}>
             {filtered.map((r, i) => {
               const total = totalOf(r);
-              const bal = balOf(r);
+              const bal = rowBal(r);
+              const linkInv = led.linkOf[r.id] && led.byKey[led.linkOf[r.id]];
               return (
                 <Row key={r.id} i={i}>
                   <Td style={{ fontWeight: 800 }}>{r.number}</Td>
                   <Td>{r.clientName}</Td>
                   <Td style={{ color: T.sub, fontWeight: 600 }}>{A_fmtDate(r.date)}</Td>
                   <Td style={{ color: T.sub, fontWeight: 600 }}>{r.method}</Td>
+                  <Td>{linkInv ? <div><div style={{ fontWeight: 800 }}>{linkInv.ref}</div><div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 2 }}>{linkInv.quote ? 'Quotation ' + linkInv.quote : linkInv.type === 'order' ? 'Online order' : 'Delivery note'}</div></div> : <span style={{ color: T.faint, fontWeight: 600 }}>{r.orderId || '—'}</span>}</Td>
                   <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{A_money(total)}</Td>
                   <Td align="right">
                     <span style={{ fontSize: 11.5, fontWeight: 800, color: bal > 0 ? T.red : T.green, background: bal > 0 ? T.redWash : T.greenWash, padding: '4px 10px', borderRadius: 999 }}>

@@ -30,12 +30,32 @@
     const clientOf = (id, name) => d.clients.find((c) => c.id === id) || d.clients.find((c) => (c.companyName || c.name || '').toLowerCase() === String(name || '').toLowerCase()) || {};
     const payments = [];
     const invoices = [];
+    // Link every receipt to the delivery / order it pays. Receipts made from
+    // Pending Payments or picked from a delivery carry sourceKey; older or
+    // hand-typed receipts are matched by the order / delivery / quotation
+    // number typed in "Against order", then by client + amount.
+    const refN = (v) => String(v || '').replace(/[#\s]/g, '').toUpperCase();
+    const orderIds = {}; d.orders.filter((o) => o.status === 'Delivered').forEach((o) => { orderIds[refN(o.id)] = 'order:' + o.id; });
+    const dnNums = {}; const dnByQuote = {};
+    deliveries.filter((x) => x.status === 'Delivered').forEach((x) => {
+      dnNums[refN(x.number)] = 'dn:' + x.id;
+      if (x.fromQuote) (dnByQuote[refN(x.fromQuote)] = dnByQuote[refN(x.fromQuote)] || []).push(x);
+    });
+    const linkOf = {};
+    receipts.forEach((r) => {
+      if (r.sourceKey) { linkOf[r.id] = r.sourceKey; return; }
+      const k = refN(r.orderId), qk = refN(r.quoteRef);
+      if (k && orderIds[k]) linkOf[r.id] = orderIds[k];
+      else if (k && dnNums[k]) linkOf[r.id] = dnNums[k];
+      else if (k && dnByQuote[k] && dnByQuote[k].length === 1) linkOf[r.id] = 'dn:' + dnByQuote[k][0].id;
+      else if (qk && dnByQuote[qk] && dnByQuote[qk].length === 1) linkOf[r.id] = 'dn:' + dnByQuote[qk][0].id;
+    });
 
     d.orders.filter((o) => o.status === 'Delivered').forEach((o) => {
       const key = 'order:' + o.id;
       const c = clientOf(o.clientId, o.clientName);
       const total = Number(o.total) || 0;
-      const mine = receipts.filter((r) => r.sourceKey === key || (!r.sourceKey && r.orderId && r.orderId === o.id));
+      const mine = receipts.filter((r) => linkOf[r.id] === key);
       let prepaid = 0;
       if (o.paymentStatus === 'Verified') {
         prepaid = o.payOnDelivery === true ? total : Math.min(total, Number(o.amountDueNow) || total);
@@ -50,7 +70,7 @@
     deliveries.filter((x) => x.status === 'Delivered').forEach((x) => {
       const key = 'dn:' + x.id;
       const q = x.fromQuote ? quotes.find((qq) => qq.number === x.fromQuote) : null;
-      const mine = receipts.filter((r) => r.sourceKey === key);
+      const mine = receipts.filter((r) => linkOf[r.id] === key);
       const set = mine.map((r) => Number(r.invoiceTotal) || 0).filter(Boolean);
       const c = clientOf(x.client && x.client.clientId, x.client && x.client.company);
       let total = 0, lines = [], unpriced = 0, quoteTotal = 0;
@@ -89,6 +109,14 @@
       arr.forEach((i, n) => { i.part = n + 1; i.parts = arr.length; i.quoteDelivered = delivered; });
     });
 
+    const nm = (v) => String(v || '').trim().toLowerCase();
+    receipts.filter((r) => !linkOf[r.id]).forEach((r) => {
+      const amt = Number(r.total) || 0;
+      if (amt <= 0) return;
+      const hit = invoices.find((i) => i.receipts.length === 0 && !i.prepaid && i.total > 0 && Math.abs(i.total - amt) < 1
+        && ((r.clientId && i.clientId === r.clientId) || (nm(r.clientName) && nm(r.clientName) === nm(i.clientName))));
+      if (hit) { hit.receipts.push(r); linkOf[r.id] = hit.key; }
+    });
     invoices.forEach((inv) => {
       const received = inv.receipts.reduce((s, r) => s + (Number(r.amountPaid) || 0), 0);
       inv.paid = inv.prepaid + received;
@@ -100,13 +128,43 @@
 
     const byKey = {}; invoices.forEach((i) => { byKey[i.key] = i; });
     receipts.forEach((r) => {
-      const inv = r.sourceKey ? byKey[r.sourceKey] : (r.orderId ? byKey['order:' + r.orderId] : null);
+      const inv = linkOf[r.id] ? byKey[linkOf[r.id]] : null;
       payments.push({ id: r.id, date: isoDate(r.date), number: r.number, clientName: r.clientName, ref: inv ? inv.ref : (r.orderId || '—'), key: inv ? inv.key : '',
         method: r.method || '—', reference: r.reference || '', amount: Number(r.amountPaid) || 0, type: r.paymentType || ((Number(r.balance) || 0) > 0 ? 'Part' : 'Full'), receipt: r, currency: (inv && inv.currency) || 'UGX' });
     });
     invoices.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     payments.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    return { invoices, payments };
+    return { invoices, payments, linkOf, byKey };
+  }
+
+  // Everything on record for one client: quotations, delivery notes, orders,
+  // receipts and the account balance. Matches by client id or company name.
+  function clientHistory(c, d, L, quotes, deliveries, receipts) {
+    const names = new Set([c.name, c.companyName].filter(Boolean).map(norm));
+    const isMe = (id, name) => (id && id === c.id) || names.has(norm(name));
+    const qs = quotes.filter((q) => isMe(q.client && q.client.clientId, q.client && q.client.company));
+    const dns = deliveries.filter((x) => isMe(x.client && x.client.clientId, x.client && x.client.company));
+    const os = d.orders.filter((o) => isMe(o.clientId, o.clientName));
+    const rs = receipts.filter((r) => isMe(r.clientId, r.clientName));
+    const inv = L.invoices.filter((i) => isMe(i.clientId, i.clientName));
+    const ugx = inv.filter((i) => i.currency === 'UGX');
+    const rIds = new Set(rs.map((r) => r.id)), invKeys = new Set(inv.map((i) => i.key));
+    const paidIn = L.payments.filter((p) => p.currency === 'UGX' && (rIds.has(p.id) || (p.number === 'Online' && invKeys.has(p.key))));
+    return {
+      quotes: qs, deliveries: dns, orders: os, receipts: rs, invoices: inv,
+      quoted: qs.filter((q) => (q.currency || 'UGX') === 'UGX').reduce((s, q) => s + window.Q_totalsOf(q).grand, 0),
+      delivered: ugx.reduce((s, i) => s + i.total, 0),
+      paid: paidIn.reduce((s, p) => s + p.amount, 0),
+      outstanding: ugx.reduce((s, i) => s + i.balance, 0),
+    };
+  }
+  function useClientHistory(c) {
+    const d = window.useData();
+    const L = useLedger();
+    const receipts = window.useReceipts();
+    const quotes = window.useQuotes ? window.useQuotes() : [];
+    const deliveries = window.useDeliveries ? window.useDeliveries() : [];
+    return React.useMemo(() => (c ? clientHistory(c, d, L, quotes, deliveries, receipts) : null), [c, d, L, quotes, deliveries, receipts]);
   }
 
   function useLedger() {
@@ -230,5 +288,5 @@
     document.head.appendChild(s);
   }
 
-  Object.assign(window, { KG_useLedger: useLedger, KG_RecordPaymentModal: RecordPaymentModal, KG_PayPill: PayPill, KG_PAY_METHODS: PAY_METHODS, KG_fmtLedger: fmt });
+  Object.assign(window, { KG_clientHistory: clientHistory, KG_useClientHistory: useClientHistory, KG_useLedger: useLedger, KG_RecordPaymentModal: RecordPaymentModal, KG_PayPill: PayPill, KG_PAY_METHODS: PAY_METHODS, KG_fmtLedger: fmt });
 })();
