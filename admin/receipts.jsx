@@ -146,6 +146,25 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
     const delLine = (key) => setF((s) => ({ ...s, items: s.items.length > 1 ? s.items.filter((l) => l.key !== key) : s.items }));
 
     // Pick a saved client — fills name, phone, email and address from the registry.
+    // Deliveries / delivered orders on account for the client being receipted.
+    const ledger = window.KG_useLedger ? window.KG_useLedger() : { invoices: [] };
+    const cname = String(f.clientName || '').trim().toLowerCase();
+    const clientInv = (editing || (!f.clientId && cname.length < 2)) ? [] : ledger.invoices.filter((i) =>
+      (f.clientId && i.clientId === f.clientId) || (cname && String(i.clientName || '').trim().toLowerCase() === cname) || (cname.length >= 3 && String(i.clientName || '').toLowerCase().includes(cname)));
+    const [showPaid, setShowPaid] = React.useState(false);
+    const linked = f.sourceKey ? ledger.invoices.find((i) => i.key === f.sourceKey) : null;
+    const linkInv = (inv) => {
+      const c = d.clients.find((x) => x.id === inv.clientId);
+      setF((s) => ({ ...s,
+        clientId: s.clientId || inv.clientId || '', clientName: s.clientName || inv.clientName,
+        clientPhone: s.clientPhone || inv.clientPhone || (c && c.phone) || '', clientEmail: s.clientEmail || inv.clientEmail || (c && c.email) || '', clientAddress: s.clientAddress || inv.clientAddress || (c && c.address) || '',
+        sourceKey: inv.key, sourceType: inv.type, quoteRef: inv.quote || '', orderId: inv.ref, invoiceTotal: inv.total,
+        previouslyPaid: inv.paid, discount: '', deliveryFee: '', amountPaid: String(Math.round(inv.balance)),
+        items: (inv.total > 0 ? inv.lines : [{ name: inv.lines[0] ? inv.lines[0].name : 'Goods delivered', qty: 1, price: '' }]).map((l) => ({ key: A_uid('l_'), ...l })),
+      }));
+    };
+    const unlink = () => setF((s) => ({ ...s, sourceKey: '', sourceType: '', quoteRef: '', invoiceTotal: '', previouslyPaid: 0, orderId: '', amountPaid: '', items: [blankLine()] }));
+
     const pickClient = (id) => {
       if (!id) { setF((s) => ({ ...s, clientId: '' })); return; }
       const c = d.clients.find((x) => x.id === id);
@@ -156,7 +175,7 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
     const subtotal = sumLines(f.items);
     const discountAmt = discountOf(f);
     const total = Math.max(0, subtotal - discountAmt + (Number(f.deliveryFee) || 0));
-    const paid = f.amountPaid === '' ? total : Number(f.amountPaid) || 0;
+    const paid = f.amountPaid === '' ? Math.max(0, total - (Number(f.previouslyPaid) || 0)) : Number(f.amountPaid) || 0;
     const balance = Math.max(0, total - (Number(f.previouslyPaid) || 0) - paid);
     const validName = !!String(f.clientName).trim();
     const validItems = f.items.some((l) => String(l.name).trim() && lineTotal(l) > 0);
@@ -168,11 +187,13 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
       discount: Number(f.discount) || 0, discountMode: f.discountMode === 'percent' ? 'percent' : 'amount',
       discountAmount: discountAmt, deliveryFee: Number(f.deliveryFee) || 0,
       amountPaid: paid, total, balance,
+      ...(f.sourceKey ? { invoiceTotal: total, paymentType: balance < 1 ? 'Full' : 'Part' } : {}),
       savedAt: new Date().toISOString(),
     });
 
     const commit = (then) => {
       setTouched(true);
+      if (f.sourceKey && paid > Math.max(0, total - (Number(f.previouslyPaid) || 0)) + 0.5) { ToastStore.push('Amount paid is more than the balance on this delivery.', { title: 'Check amount', icon: 'doc', tone: 'error' }); return; }
       if (!validName || !validItems) { ToastStore.push('Add the client name and at least one line with a quantity and price.', { title: 'Incomplete receipt', icon: 'doc', tone: 'error' }); return; }
       const rec = clean();
       ReceiptStore.save(rec);
@@ -220,6 +241,51 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
           <Field label="Issued by"><Input value={f.issuedBy} onChange={(e) => set('issuedBy', e.target.value)} placeholder="Staff name" /></Field>
         </div>
 
+        {!editing && (clientInv.length > 0 || linked) && (() => {
+          const fmtL = window.KG_fmtLedger || ((n) => A_money(n)), Pill = window.KG_PayPill;
+          const open = clientInv.filter((i) => i.status !== 'Paid');
+          const shown = showPaid ? clientInv : open;
+          const groups = {};
+          shown.forEach((i) => { const g = i.quote ? 'Quotation ' + i.quote : i.type === 'order' ? 'Online orders' : 'Delivery notes (no quotation)'; (groups[g] = groups[g] || []).push(i); });
+          return (
+            <div style={{ marginTop: 20, border: `1px solid ${linked ? T.blue : T.line}`, borderRadius: 13, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', background: linked ? T.blueWash : T.surface, borderBottom: `1px solid ${T.line}` }}>
+                <Icon name="truck" size={16} color={T.blue} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{linked ? `Receipt for ${linked.label}` : 'Receipt against a delivery'}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, marginTop: 1 }}>{linked ? `${linked.quote ? 'Quotation ' + linked.quote + (linked.parts > 1 ? ` · delivery ${linked.part} of ${linked.parts}` : '') + ' · ' : ''}Paid before: ${fmtL(linked.paid, linked.currency)}` : `${open.length} unpaid for this client — pick one to fill the items and balance`}</div>
+                </div>
+                {linked ? <Button size="sm" variant="ghost" onClick={unlink}>Unlink</Button>
+                  : clientInv.length > open.length && <button onClick={() => setShowPaid((v) => !v)} style={{ border: 'none', background: 'none', color: T.blue, fontFamily: F, fontSize: 12.5, fontWeight: 800, cursor: 'pointer' }}>{showPaid ? 'Hide paid' : `Show paid (${clientInv.length - open.length})`}</button>}
+              </div>
+              {!linked && (shown.length === 0
+                ? <div style={{ padding: '14px', fontSize: 13, fontWeight: 700, color: T.sub, textAlign: 'center' }}>All deliveries for this client are paid.</div>
+                : Object.entries(groups).map(([g, arr]) => (
+                  <div key={g}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '8px 14px', fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase', letterSpacing: 0.4, borderTop: `1px solid ${T.lineSoft}` }}>
+                      <span>{g}</span>{arr[0].quote && arr[0].quoteTotal > 0 && <span>Quoted {fmtL(arr[0].quoteTotal, arr[0].currency)} · delivered {fmtL(arr[0].quoteDelivered, arr[0].currency)}</span>}
+                    </div>
+                    {arr.map((i) => (
+                      <button key={i.key} onClick={() => linkInv(i)} disabled={i.status === 'Paid'}
+                        style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '10px 14px', border: 'none', borderTop: `1px solid ${T.lineSoft}`, background: '#fff', cursor: i.status === 'Paid' ? 'default' : 'pointer', fontFamily: F }}
+                        onMouseEnter={(e) => { if (i.status !== 'Paid') e.currentTarget.style.background = T.blueWash; }} onMouseLeave={(e) => { e.currentTarget.style.background = '#fff'; }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 800, color: T.ink }}>{i.ref}{i.parts > 1 && <span style={{ fontWeight: 700, color: T.sub }}> · delivery {i.part} of {i.parts}</span>}</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: T.sub, marginTop: 2 }}>{A_fmtDate(i.date)} · {i.lines.filter((l) => l.name !== 'VAT 18%').length} item line{i.lines.length === 1 ? '' : 's'}{i.unpriced ? ` · ${i.unpriced} not on quotation` : ''}</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 800, color: i.balance > 0 ? T.ink : T.green, fontVariantNumeric: 'tabular-nums' }}>{i.total > 0 ? fmtL(i.balance, i.currency) : 'Enter amount'}</div>
+                          <div style={{ fontSize: 11.5, fontWeight: 600, color: T.sub }}>{i.total > 0 ? 'of ' + fmtL(i.total, i.currency) : ''}</div>
+                        </div>
+                        {Pill && <Pill status={i.status} />}
+                      </button>
+                    ))}
+                  </div>
+                )))}
+            </div>
+          );
+        })()}
+
         <div style={{ marginTop: 20, border: `1px solid ${T.line}`, borderRadius: 13, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', background: '#fff' }}>
             <thead><tr style={{ background: T.surface, borderBottom: `1px solid ${T.line}` }}>
@@ -263,13 +329,13 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
             <div style={{ marginTop: 10, marginBottom: 12 }}>
               <Field label="Delivery fee"><Input value={f.deliveryFee} onChange={(e) => set('deliveryFee', e.target.value)} placeholder="0" /></Field>
             </div>
-            <Field label="Amount paid" hint="Leave blank for paid in full."><Input value={f.amountPaid} onChange={(e) => set('amountPaid', e.target.value)} placeholder={String(total)} /></Field>
+            <Field label="Amount paid" hint={f.sourceKey ? 'Part payment allowed — balance carries forward.' : 'Leave blank for paid in full.'}><Input value={f.amountPaid} onChange={(e) => set('amountPaid', e.target.value)} placeholder={String(Math.max(0, total - (Number(f.previouslyPaid) || 0)))} /></Field>
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
               {[['Subtotal', A_money(subtotal)]]
                 .concat(discountAmt > 0 ? [[f.discountMode === 'percent' ? `Discount (${Number(f.discount) || 0}%)` : 'Discount', '\u2212 ' + A_money(discountAmt)]] : [])
                 .concat((Number(f.deliveryFee) || 0) > 0 ? [['Delivery fee', A_money(Number(f.deliveryFee) || 0)]] : [])
-                .concat([['Total', A_money(total)], ['Paid', A_money(paid)]]).map(([k, v], i, arr) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: i === arr.length - 2 ? 15 : 13, fontWeight: 800, color: i === arr.length - 2 ? T.ink : T.sub }}>
+                .concat([['Total', A_money(total)]]).concat((Number(f.previouslyPaid) || 0) > 0 ? [['Paid before', A_money(Number(f.previouslyPaid) || 0)]] : []).concat([['Paid', A_money(paid)]]).map(([k, v], i, arr) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: k === 'Total' ? 15 : 13, fontWeight: 800, color: k === 'Total' ? T.ink : T.sub }}>
                   <span>{k}</span><span style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{v}</span></div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: 6, borderTop: `1px solid ${T.line}`, fontSize: 13.5, fontWeight: 800, color: balance > 0 ? T.red : T.green }}>

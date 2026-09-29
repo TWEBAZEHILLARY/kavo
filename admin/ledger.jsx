@@ -12,6 +12,7 @@
   const dayDiff = (iso) => { const t = new Date(iso).getTime(); return isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / 86400000)); };
   const fmt = (n, cur) => (!cur || cur === 'UGX' ? window.A_money(n) : window.Q_fmtMoney(n, cur));
   const isoDate = (v) => String(v || '').slice(0, 10);
+  const norm = (v) => String(v || '').trim().toLowerCase();
 
   const STATUS_TONE = {
     'Pending payment': { c: T.amberInk || '#9A6700', b: '#FFF3DC' },
@@ -52,20 +53,40 @@
       const mine = receipts.filter((r) => r.sourceKey === key);
       const set = mine.map((r) => Number(r.invoiceTotal) || 0).filter(Boolean);
       const c = clientOf(x.client && x.client.clientId, x.client && x.client.company);
-      let total = 0, lines = [];
+      let total = 0, lines = [], unpriced = 0, quoteTotal = 0;
       if (q) {
-        const t = window.Q_totalsOf(q);
-        total = t.grand;
-        lines = (q.items || []).filter((it) => String(it.description || '').trim()).map((it) => ({ name: [it.code, it.description].filter(Boolean).join(' — '), qty: Number(it.qty) || 0, price: Number(it.unitPrice) || 0 }));
-        const gross = lines.reduce((s, l) => s + l.qty * l.price, 0);
-        if (total - gross > 0.5) lines.push({ name: 'VAT 18%', qty: 1, price: Math.round(total - gross) });
-      } else if (Number(x.invoiceTotal) > 0 || set.length) {
-        total = Number(x.invoiceTotal) || set[set.length - 1];
+        // Price only what THIS note delivered, using the quotation's unit
+        // prices and per-line VAT — so a quotation split over several
+        // deliveries gives each delivery its own amount.
+        const qi = q.items || [];
+        const match = (it) => qi.find((a) => norm(a.code) === norm(it.code) && norm(a.description) === norm(it.description))
+          || (norm(it.description) ? qi.find((a) => norm(a.description) === norm(it.description)) : null)
+          || (norm(it.code) ? qi.find((a) => norm(a.code) === norm(it.code)) : null);
+        let vat = 0, net = 0;
+        (x.items || []).filter((it) => norm(it.description) || Number(it.qty)).forEach((it) => {
+          const m = match(it), qty = Number(it.qty) || 0, price = m ? Number(m.unitPrice) || 0 : 0, a = qty * price;
+          if (!m) unpriced++;
+          else if (window.Q_itemVat(q, m) === 'exclusive') vat += a * 0.18;
+          net += a;
+          lines.push({ name: [it.code, it.description].filter(Boolean).join(' — '), qty, price });
+        });
+        total = net + vat;
+        if (vat > 0.5) lines.push({ name: 'VAT 18%', qty: 1, price: Math.round(vat) });
+        quoteTotal = window.Q_totalsOf(q).grand;
       }
+      if (total <= 0 && (Number(x.invoiceTotal) > 0 || set.length)) { total = Number(x.invoiceTotal) || set[set.length - 1]; lines = []; }
       if (!lines.length) lines = [{ name: 'Goods supplied per delivery note ' + x.number, qty: 1, price: total }];
       invoices.push({ key, type: 'dn', ref: x.number, id: x.id, label: 'Delivery ' + x.number, quote: q ? q.number : '', clientId: c.id || '',
         clientName: (x.client && x.client.company) || '—', clientPhone: (x.client && x.client.phone) || c.phone || '', clientEmail: (x.client && x.client.email) || c.email || '',
-        clientAddress: (x.client && x.client.address) || c.address || '', date: isoDate(x.deliveredAt || x.date), total, currency: (q && q.currency) || 'UGX', prepaid: 0, receipts: mine, lines });
+        clientAddress: (x.client && x.client.address) || c.address || '', date: isoDate(x.deliveredAt || x.date), total, currency: (q && q.currency) || 'UGX', prepaid: 0, receipts: mine, lines, unpriced, quoteTotal });
+    });
+    // Number split deliveries of one quotation: "Delivery 2 of 3".
+    const byQuote = {};
+    invoices.filter((i) => i.quote).forEach((i) => { (byQuote[i.quote] = byQuote[i.quote] || []).push(i); });
+    Object.values(byQuote).forEach((arr) => {
+      arr.sort((a, b) => (a.date || '').localeCompare(b.date || '') || String(a.ref).localeCompare(String(b.ref)));
+      const delivered = arr.reduce((s, i) => s + i.total, 0);
+      arr.forEach((i, n) => { i.part = n + 1; i.parts = arr.length; i.quoteDelivered = delivered; });
     });
 
     invoices.forEach((inv) => {
