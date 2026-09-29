@@ -6,7 +6,7 @@
   const { Card, PageHead, Button, IconBtn, Search, Select, Table, Td, Row, Empty, Pill,
     Field, Input, Textarea, Modal, ConfirmStore, ToastStore, Router, useData, useAuth, DataStore, A_uid,
     A_field, A_lbl, PPS_PAYMENT_TERMS, PPS_CURRENCIES, Q_fmtMoney, Q_fmtDate, Q_todayISO, Q_addDays,
-    Q_totalsOf, QuoteStore, useQuotes, buildQuotationHTML, printQuotation } = window;
+    Q_totalsOf, Q_itemVat, QuoteStore, useQuotes, buildQuotationHTML, printQuotation } = window;
 
   const UOMS = ['Pcs', 'Mtrs', 'Kg', 'Set', 'Box', 'Roll', 'Unit', 'Pair', 'Hrs', 'Lot'];
   const Q_STATUSES = ['Draft', 'Sent', 'Accepted', 'Rejected'];
@@ -33,8 +33,8 @@
         id: 'q_' + Math.random().toString(36).slice(2, 9), seq, number,
         issuedBy: auth.signature || auth.name, issuedByTitle: auth.title || '',
         client: { company: presetClient || '', tin: '', address: pc.address || '', phone: pc.phone || '', email: pc.email || '' },
-        date: today, validUntil: Q_addDays(today, 30), paymentTerms: 'Net 30 Days', currency: 'UGX', vat: true, vatMode: 'exclusive',
-        items: [{ code: 'ITM-001', description: '', uom: 'Pcs', qty: 1, unitPrice: 0 }],
+        date: today, validUntil: Q_addDays(today, 30), paymentTerms: 'Net 30 Days', currency: 'UGX', vat: true, vatMode: 'exclusive', vatExempt: false,
+        items: [{ code: 'ITM-001', description: '', uom: 'Pcs', qty: 1, unitPrice: 0, vat: 'exclusive' }],
         status: 'Draft', createdAt: new Date().toISOString(),
       };
     };
@@ -66,7 +66,7 @@
       ToastStore.push(`${company} added to Clients.`, { title: 'Client saved', icon: 'check', tone: 'ok' });
     };
     const setItem = (i, k, v) => setQ((s) => { const items = s.items.slice(); items[i] = { ...items[i], [k]: v }; return { ...s, items }; });
-    const addItem = () => setQ((s) => ({ ...s, items: [...s.items, { code: 'ITM-' + String(s.items.length + 1).padStart(3, '0'), description: '', uom: 'Pcs', qty: 1, unitPrice: 0 }] }));
+    const addItem = () => setQ((s) => ({ ...s, items: [...s.items, { code: 'ITM-' + String(s.items.length + 1).padStart(3, '0'), description: '', uom: 'Pcs', qty: 1, unitPrice: 0, vat: s.items.length ? Q_itemVat({ ...s, vatExempt: false }, s.items[s.items.length - 1]) : 'exclusive' }] }));
     const removeItem = (i) => setQ((s) => ({ ...s, items: s.items.length > 1 ? s.items.filter((_, x) => x !== i) : s.items }));
 
     const t = Q_totalsOf(q);
@@ -146,17 +146,16 @@
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>Items</span>
             <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: T.sub }}>· amount calculates automatically</span>
-            <div style={{ flex: 1 }} />
-            <Button size="sm" variant="ghost" icon="plus" onClick={addItem}>Add row</Button>
           </div>
           <div style={{ overflowX: 'auto', border: `1px solid ${T.line}`, borderRadius: 14 }}>
-            <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse', fontFamily: F }}>
+            <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontFamily: F }}>
               <thead><tr style={{ background: T.surface }}>
                 <th style={{ ...head, padding: '10px 8px 10px 12px', width: 120 }}>Item code</th>
                 <th style={{ ...head, padding: '10px 8px' }}>Description</th>
                 <th style={{ ...head, padding: '10px 8px', width: 92 }}>UOM</th>
                 <th style={{ ...head, padding: '10px 8px', width: 74, textAlign: 'right' }}>Qty</th>
                 <th style={{ ...head, padding: '10px 8px', width: 130, textAlign: 'right' }}>Unit price</th>
+                <th style={{ ...head, padding: '10px 8px', width: 128 }}>VAT</th>
                 <th style={{ ...head, padding: '10px 8px', width: 130, textAlign: 'right' }}>Amount</th>
                 <th style={{ ...head, padding: '10px 12px 10px 8px', width: 40 }}></th>
               </tr></thead>
@@ -170,6 +169,12 @@
                     </td>
                     <td style={{ padding: '7px 6px' }}><input type="number" min="0" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} style={numCell} /></td>
                     <td style={{ padding: '7px 6px' }}><input type="number" min="0" value={it.unitPrice} onChange={(e) => setItem(i, 'unitPrice', e.target.value)} style={numCell} /></td>
+                    <td style={{ padding: '7px 6px' }}>
+                      {(() => { const m = Q_itemVat(q, it); const tone = m === 'exempt' ? { c: T.sub, b: T.surface } : m === 'inclusive' ? { c: T.green, b: '#EEF8F2' } : { c: T.blue, b: T.blueWash };
+                        return <select value={m} disabled={!!q.vatExempt} title={q.vatExempt ? 'Whole quotation is VAT exempt' : 'VAT for this item'} onChange={(e) => setItem(i, 'vat', e.target.value)}
+                          style={{ ...cell, appearance: 'none', WebkitAppearance: 'none', cursor: q.vatExempt ? 'not-allowed' : 'pointer', fontWeight: 800, fontSize: 12, color: tone.c, background: tone.b, opacity: q.vatExempt ? 0.7 : 1 }}>
+                          <option value="exclusive">Exclusive +18%</option><option value="inclusive">Inclusive</option><option value="exempt">VAT exempt</option></select>; })()}
+                    </td>
                     <td style={{ padding: '7px 6px', textAlign: 'right', fontSize: 13, fontWeight: 800, color: T.ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{Q_fmtMoney((Number(it.qty) || 0) * (Number(it.unitPrice) || 0), cur)}</td>
                     <td style={{ padding: '7px 10px 7px 6px', textAlign: 'center' }}>
                       <button onClick={() => removeItem(i)} title="Remove" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${T.line}`, background: '#fff', color: T.red, cursor: q.items.length > 1 ? 'pointer' : 'not-allowed', opacity: q.items.length > 1 ? 1 : 0.4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="minus" size={15} color={T.red} stroke={2.6} /></button>
@@ -179,22 +184,22 @@
               </tbody>
             </table>
           </div>
+          <button onClick={addItem} style={{ marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 14px', borderRadius: 12, border: `1.5px dashed ${T.line}`, background: T.surface, color: T.blue, fontFamily: F, fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>
+            <Icon name="plus" size={15} color={T.blue} stroke={2.6} />Add row</button>
         </div>
 
         {/* VAT + totals */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 18, alignItems: 'flex-start' }}>
           <div style={{ flex: '1 1 320px', maxWidth: 400, marginLeft: 'auto', border: `1px solid ${T.line}`, borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '11px 15px', fontSize: 13.5 }}><span style={{ fontWeight: 700, color: T.sub }}>Subtotal</span><strong style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{Q_fmtMoney(t.subtotal, cur)}</strong></div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 15px', borderTop: `1px solid ${T.lineSoft}` }}>
-              <span style={{ fontWeight: 700, color: T.sub, fontSize: 13.5 }}>VAT</span>
-              <div style={{ position: 'relative', display: 'flex', background: T.surface, border: `1px solid ${T.line}`, borderRadius: 999, padding: 3, cursor: 'pointer', userSelect: 'none', width: 220 }}>
-                <span style={{ position: 'absolute', top: 3, bottom: 3, left: t.mode === 'inclusive' ? 3 : 'calc(50%)', width: 'calc(50% - 3px)', background: T.blue, borderRadius: 999, transition: 'left .18s ease' }}></span>
-                <span onClick={() => setQ((s) => ({ ...s, vatMode: 'inclusive', vat: false }))} style={{ position: 'relative', zIndex: 1, flex: 1, textAlign: 'center', padding: '5px 4px', fontSize: 12, fontWeight: 800, color: t.mode === 'inclusive' ? '#fff' : T.sub }}>Inclusive</span>
-                <span onClick={() => setQ((s) => ({ ...s, vatMode: 'exclusive', vat: true }))} style={{ position: 'relative', zIndex: 1, flex: 1, textAlign: 'center', padding: '5px 4px', fontSize: 12, fontWeight: 800, color: t.mode === 'exclusive' ? '#fff' : T.sub }}>Exclusive +18%</span>
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '11px 15px', fontSize: 13.5, borderTop: `1px solid ${T.lineSoft}` }}><span style={{ fontWeight: 700, color: T.sub }}>VAT {t.mode === 'inclusive' ? '(18% Inclusive)' : '(18%)'}</span><strong style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{t.mode === 'inclusive' ? 'Inclusive' : Q_fmtMoney(t.vat, cur)}</strong></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '11px 15px', fontSize: 13.5 }}><span style={{ fontWeight: 700, color: T.sub }}>Subtotal (excl. VAT)</span><strong style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{Q_fmtMoney(t.subtotal, cur)}</strong></div>
+            {t.exempt > 0 && t.mode !== 'exempt' && <div style={{ display: 'flex', justifyContent: 'space-between', padding: '11px 15px', fontSize: 13.5, borderTop: `1px solid ${T.lineSoft}` }}><span style={{ fontWeight: 700, color: T.sub }}>VAT exempt items</span><strong style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{Q_fmtMoney(t.exempt, cur)}</strong></div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '11px 15px', fontSize: 13.5, borderTop: `1px solid ${T.lineSoft}` }}><span style={{ fontWeight: 700, color: T.sub }}>VAT (18%)</span><strong style={{ color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{t.mode === 'exempt' ? 'Exempt' : Q_fmtMoney(t.vat, cur)}</strong></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '13px 15px', background: T.navy, color: '#fff' }}><span style={{ fontWeight: 800 }}>Grand Total</span><strong style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}>{Q_fmtMoney(t.grand, cur)}</strong></div>
+            <button onClick={() => setQ((s) => ({ ...s, vatExempt: !s.vatExempt }))} aria-pressed={!!q.vatExempt}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '11px 15px', border: 'none', borderTop: `1px solid ${T.line}`, background: q.vatExempt ? T.blueWash : '#fff', cursor: 'pointer', fontFamily: F, textAlign: 'left' }}>
+              <span><span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: T.ink }}>No VAT (VAT exempt)</span><span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: T.sub, marginTop: 2 }}>Applies to the whole quotation</span></span>
+              <span style={{ position: 'relative', width: 40, height: 22, borderRadius: 999, background: q.vatExempt ? T.blue : T.line, transition: 'background .18s', flexShrink: 0 }}><span style={{ position: 'absolute', top: 3, left: q.vatExempt ? 21 : 3, width: 16, height: 16, borderRadius: 999, background: '#fff', transition: 'left .18s', boxShadow: '0 1px 2px rgba(0,0,0,.2)' }}></span></span>
+            </button>
           </div>
         </div>
       </Modal>

@@ -22,11 +22,13 @@
       const img = new Image(); img.onerror = rej;
       img.onload = () => {
         const png = /png|webp/i.test(file.type);
-        const k = Math.min(1, 1400 / Math.max(img.width, img.height));
+        const k = Math.min(1, 1000 / Math.max(img.width, img.height));
         const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
         const x = c.getContext('2d'); if (!png) { x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); }
         x.drawImage(img, 0, 0, c.width, c.height);
-        res(png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.85));
+        // Keep photos small so they sync to every visitor (WebP keeps transparency).
+        const webp = c.toDataURL('image/webp', 0.82);
+        res(webp.startsWith('data:image/webp') ? webp : (png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.82)));
       };
       img.src = r.result;
     };

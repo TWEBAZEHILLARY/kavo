@@ -31,12 +31,23 @@
   const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const addDays = (iso, n) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
+  // VAT is chosen per line: 'exclusive' (+18% on top), 'inclusive' (price
+  // already contains 18%) or 'exempt'. q.vatExempt makes the whole quotation
+  // VAT exempt. Older quotes without per-line VAT fall back to q.vatMode.
+  const itemVat = (q, it) => (q.vatExempt ? 'exempt' : (it.vat || q.vatMode || (q.vat === false ? 'inclusive' : 'exclusive')));
   const totalsOf = (q) => {
-    const subtotal = (q.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
-    const mode = q.vatMode || (q.vat === false ? 'inclusive' : 'exclusive');
-    const vat = mode === 'exclusive' ? subtotal * VAT_RATE : 0;
-    return { subtotal, vat, grand: subtotal + vat, mode };
+    let subtotal = 0, vat = 0, exempt = 0; const modes = new Set();
+    (q.items || []).forEach((it) => {
+      const a = (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), m = itemVat(q, it);
+      modes.add(m);
+      if (m === 'inclusive') { const net = a / (1 + VAT_RATE); subtotal += net; vat += a - net; }
+      else if (m === 'exempt') { subtotal += a; exempt += a; }
+      else { subtotal += a; vat += a * VAT_RATE; }
+    });
+    const mode = modes.size === 1 ? [...modes][0] : (modes.size ? 'mixed' : 'exclusive');
+    return { subtotal, vat, exempt, grand: subtotal + vat, mode };
   };
+  const VAT_LBL = { exclusive: 'Excl.', inclusive: 'Incl.', exempt: 'Exempt' };
 
   // ── Store (pps_quotations) ───────────────────────────────────────────────
   const KEY = 'pps_quotations';
@@ -132,6 +143,7 @@
         <td class="c">${esc(it.uom)}</td>
         <td class="r">${Number(it.qty || 0).toLocaleString('en-US')}</td>
         <td class="r">${fmtMoney(it.unitPrice, q.currency)}</td>
+        <td class="c">${VAT_LBL[itemVat(q, it)]}</td>
         <td class="r">${fmtMoney((Number(it.qty) || 0) * (Number(it.unitPrice) || 0), q.currency)}</td>
       </tr>`).join('');
     return `
@@ -177,9 +189,9 @@
 
       <table class="pq-items">
         <thead><tr>
-          <th class="c">#</th><th>Item Code</th><th>Description</th><th class="c">UOM</th><th class="r">Qty</th><th class="r">Unit Price</th><th class="r">Amount</th>
+          <th class="c">#</th><th>Item Code</th><th>Description</th><th class="c">UOM</th><th class="r">Qty</th><th class="r">Unit Price</th><th class="c">VAT</th><th class="r">Amount</th>
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="7" class="c muted">No items</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="8" class="c muted">No items</td></tr>'}</tbody>
       </table>
 
       <div class="pq-bottom">
@@ -187,15 +199,16 @@
           <div class="pq-lbl">Terms &amp; Conditions</div>
           <ol>
             <li>This quotation is valid until the date shown above; prices are subject to change thereafter.</li>
-            <li>Prices are quoted in ${esc((CURRENCIES[q.currency] || {}).code || q.currency)} and are ${t.mode === 'inclusive' ? 'inclusive of VAT' : 'exclusive of VAT unless stated in the totals'}.</li>
+            <li>Prices are quoted in ${esc((CURRENCIES[q.currency] || {}).code || q.currency)} and are ${t.mode === 'exempt' ? 'VAT exempt' : t.mode === 'inclusive' ? 'inclusive of VAT' : t.mode === 'exclusive' ? 'exclusive of VAT; VAT is added in the totals' : 'inclusive, exclusive or exempt of VAT as marked on each line'}.</li>
             <li>Delivery lead time confirmed on receipt of a purchase order and applicable deposit.</li>
             <li>Goods remain the property of ${esc(COMPANY.name)} until paid in full.</li>
             <li>Warranty per manufacturer terms; claims handled through KAVO.</li>
           </ol>
         </div>
         <div class="pq-totals">
-          <div class="pq-trow"><span>Subtotal</span><strong>${fmtMoney(t.subtotal, q.currency)}</strong></div>
-          <div class="pq-trow"><span>VAT ${t.mode === 'inclusive' ? '(18% Inclusive)' : '(18%)'}</span><strong>${t.mode === 'inclusive' ? 'Inclusive' : fmtMoney(t.vat, q.currency)}</strong></div>
+          <div class="pq-trow"><span>Subtotal (excl. VAT)</span><strong>${fmtMoney(t.subtotal, q.currency)}</strong></div>
+          ${t.exempt > 0 ? `<div class="pq-trow"><span>VAT exempt items</span><strong>${fmtMoney(t.exempt, q.currency)}</strong></div>` : ''}
+          <div class="pq-trow"><span>VAT (18%)</span><strong>${t.mode === 'exempt' ? 'Exempt' : fmtMoney(t.vat, q.currency)}</strong></div>
           <div class="pq-trow pq-grand"><span>Grand Total</span><strong>${fmtMoney(t.grand, q.currency)}</strong></div>
         </div>
       </div>
@@ -231,7 +244,7 @@
 
   Object.assign(window, {
     PPS_COMPANY: COMPANY, PPS_CURRENCIES: CURRENCIES, PPS_PAYMENT_TERMS: PAYMENT_TERMS, PPS_VAT_RATE: VAT_RATE,
-    Q_fmtMoney: fmtMoney, Q_fmtDate: fmtDate, Q_todayISO: todayISO, Q_addDays: addDays, Q_totalsOf: totalsOf,
+    Q_fmtMoney: fmtMoney, Q_fmtDate: fmtDate, Q_todayISO: todayISO, Q_addDays: addDays, Q_totalsOf: totalsOf, Q_itemVat: itemVat,
     QuoteStore, useQuotes, buildQuotationHTML, printQuotation,
   });
 })();
