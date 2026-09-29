@@ -298,6 +298,12 @@
     // reload inquiries so the console never overwrites a newer conversation.
     const refreshInquiries = () => { state.inquiries = read(KEYS.inquiries, state.inquiries); emit(); };
     window.addEventListener('pps-sync', (e) => { if (e.detail && e.detail.key === KEYS.inquiries) refreshInquiries(); });
+    // Keep orders and clients current when another device changes them.
+    window.addEventListener('pps-sync', (e) => {
+      const k = e.detail && e.detail.key;
+      if (k === KEYS.orders) { state.orders = read(KEYS.orders, state.orders); emit(); }
+      if (k === KEYS.clients) { state.clients = read(KEYS.clients, state.clients); emit(); }
+    });
     window.addEventListener('storage', (e) => { if (e.key === KEYS.inquiries) refreshInquiries(); });
 
     // Keep at most `maxCount` products carrying `tagName`. Tagged products are kept
@@ -499,6 +505,10 @@
     let list = (() => { try { const r = JSON.parse(localStorage.getItem(RCPT_KEY)); return Array.isArray(r) ? r : []; } catch (e) { return []; } })();
     const persistR = () => { try { localStorage.setItem(RCPT_KEY, JSON.stringify(list)); } catch (e) {} };
     const emitR = () => { list = list.slice(); subs.forEach((f) => f(list)); };
+    window.addEventListener('pps-sync', (e) => {
+      if (!e.detail || e.detail.key !== RCPT_KEY) return;
+      try { const r = JSON.parse(localStorage.getItem(RCPT_KEY)); if (Array.isArray(r)) { list = r; emitR(); } } catch (err) {}
+    });
     return {
       get: () => list,
       nextNumber: () => {

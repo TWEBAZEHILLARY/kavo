@@ -42,7 +42,8 @@
     const total = totalOf(r);
     const disc = discountOf(r);
     const paid = Number(r.amountPaid) || 0;
-    const balance = Math.max(0, total - paid);
+    const prev = Number(r.previouslyPaid) || 0;
+    const balance = Math.max(0, total - prev - paid);
     const extra = [
       disc > 0 ? [r.discountMode === 'percent' ? `Discount (${Number(r.discount) || 0}%)` : 'Discount', '\u2212 ' + money(disc)] : null,
       (Number(r.deliveryFee) || 0) > 0 ? ['Delivery fee', money(r.deliveryFee)] : null,
@@ -91,7 +92,9 @@ ${r.clientPhone ? `<div>${esc(r.clientPhone)}</div>` : ''}${r.clientEmail ? `<di
 <div class="fact"><span>Date</span><strong>${esc(A_fmtDate(r.date))}</strong></div>
 <div class="fact"><span>Payment method</span><strong>${esc(r.method || '\u2014')}</strong></div>
 ${r.reference ? `<div class="fact"><span>Reference</span><strong>${esc(r.reference)}</strong></div>` : ''}
-${r.orderId ? `<div class="fact"><span>Order</span><strong>${esc(r.orderId)}</strong></div>` : ''}
+${r.orderId ? `<div class="fact"><span>${r.sourceType === 'dn' ? 'Delivery note' : 'Order'}</span><strong>${esc(r.orderId)}</strong></div>` : ''}
+${r.quoteRef ? `<div class="fact"><span>Quotation</span><strong>${esc(r.quoteRef)}</strong></div>` : ''}
+${r.paymentType ? `<div class="fact"><span>Payment</span><strong>${r.paymentType === 'Full' ? (prev > 0 ? 'Final payment' : 'Full payment') : 'Part payment'}</strong></div>` : ''}
 <div class="fact"><span>Issued by</span><strong>${esc(r.issuedBy || 'KAVO')}</strong></div></div></div>
 <table class="items"><thead><tr><th class="c">#</th><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr></thead>
 <tbody>${rows || '<tr><td colspan="5" class="c">No items</td></tr>'}</tbody></table>
@@ -102,7 +105,8 @@ ${balance === 0 ? '<div class="stamp">PAID IN FULL</div>' : ''}
 <div class="sign"><div class="sigbox">Received by (signature &amp; date)</div><div class="sigbox">For ${esc(COMPANY.name)}</div></div></div>
 <div class="tot"><div class="trow"><span>Subtotal</span><strong>${money(sumLines(r.items || []))}</strong></div>${extra}
 <div class="trow grand"><span>Total</span><strong>${money(total)}</strong></div>
-<div class="trow"><span>Amount paid</span><strong class="paid">${money(paid)}</strong></div>
+${prev > 0 ? `<div class="trow"><span>Previously paid</span><strong>${money(prev)}</strong></div>` : ''}
+<div class="trow"><span>${prev > 0 ? 'This payment' : 'Amount paid'}</span><strong class="paid">${money(paid)}</strong></div>
 ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">${money(balance)}</strong></div>` : ''}</div></div>
 <div class="foot">${esc(COMPANY.name)} &middot; ${esc(COMPANY.address)} &middot; ${esc(COMPANY.postal)} &middot; ${esc(COMPANY.phone)} &middot; ${esc(COMPANY.email)} &middot; ${esc(COMPANY.web)}</div>
 </body></html>`;
@@ -153,7 +157,7 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
     const discountAmt = discountOf(f);
     const total = Math.max(0, subtotal - discountAmt + (Number(f.deliveryFee) || 0));
     const paid = f.amountPaid === '' ? total : Number(f.amountPaid) || 0;
-    const balance = Math.max(0, total - paid);
+    const balance = Math.max(0, total - (Number(f.previouslyPaid) || 0) - paid);
     const validName = !!String(f.clientName).trim();
     const validItems = f.items.some((l) => String(l.name).trim() && lineTotal(l) > 0);
 
@@ -289,7 +293,11 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
       return [r.number, r.clientName, r.reference, r.orderId, r.method].some((v) => String(v || '').toLowerCase().includes(s));
     });
     const totalIssued = list.reduce((s, r) => s + totalOf(r), 0);
-    const outstanding = list.reduce((s, r) => s + Math.max(0, totalOf(r) - (Number(r.amountPaid) || 0)), 0);
+    const balOf = (r) => Math.max(0, totalOf(r) - (Number(r.previouslyPaid) || 0) - (Number(r.amountPaid) || 0));
+    // Instalments against one delivery share a sourceKey: only the latest counts.
+    const latest = {};
+    list.forEach((r) => { if (r.sourceKey && (!latest[r.sourceKey] || (r.savedAt || '') > (latest[r.sourceKey].savedAt || ''))) latest[r.sourceKey] = r; });
+    const outstanding = list.filter((r) => !r.sourceKey || latest[r.sourceKey] === r).reduce((s, r) => s + balOf(r), 0);
 
     const del = (r) => ConfirmStore.open({
       title: 'Delete receipt', sub: r.number + ' · ' + r.clientName, confirmLabel: 'Delete', danger: true,
@@ -324,7 +332,7 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
           <Table columns={[{ label: 'Receipt' }, { label: 'Client' }, { label: 'Date' }, { label: 'Method' }, { label: 'Total', align: 'right' }, { label: 'Balance', align: 'right' }, { label: '', align: 'right' }]}>
             {filtered.map((r, i) => {
               const total = totalOf(r);
-              const bal = Math.max(0, total - (Number(r.amountPaid) || 0));
+              const bal = balOf(r);
               return (
                 <Row key={r.id} i={i}>
                   <Td style={{ fontWeight: 800 }}>{r.number}</Td>
@@ -361,4 +369,5 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
   }
 
   window.AdminReceipts = Receipts;
+  window.KG_printReceipt = printReceipt;
 })();

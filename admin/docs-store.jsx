@@ -70,6 +70,7 @@
     const subs = new Set();
     let list = read() || [];
     const emit = () => { list = list.slice(); subs.forEach((f) => f(list)); };
+    window.addEventListener('pps-sync', (e) => { if (e.detail && e.detail.key === key) { list = read() || list; emit(); } });
     const persist = () => writeAll(list);
     return {
       all: () => list,

@@ -112,6 +112,7 @@
     const subs = new Set();
     let list = read() || [];
     const emit = () => { list = list.slice(); subs.forEach((f) => f(list)); };
+    window.addEventListener('pps-sync', (e) => { if (e.detail && e.detail.key === KEY) { list = read() || list; emit(); } });
     const persist = () => writeAll(list);
     const nextSeq = () => seqFloor(list) + 1;
     return {

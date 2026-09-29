@@ -99,32 +99,113 @@
   }
 
   // ══════════════════════════════ DELIVERED ════════════════════════════════
-  function DeliveredReport({ d }) {
+  // Delivered orders + delivered delivery notes, with their payment status.
+  function DeliveredReport() {
+    const L = window.KG_useLedger();
+    const fmt = window.KG_fmtLedger, PayPill = window.KG_PayPill;
     const [from, setFrom] = React.useState('');
     const [to, setTo] = React.useState('');
-    const rows = d.orders.filter((o) => o.status === 'Delivered' && inRange(o.date, from, to))
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
-    const total = rows.reduce((s, o) => s + o.total, 0);
-    const exp = () => downloadCSV('delivered-orders.csv',
-      ['Order ID', 'Client', 'Date', 'Items', 'Payment', 'Total (UGX)'],
-      rows.map((o) => [o.id, o.clientName, o.date, o.items.reduce((s, it) => s + it.qty, 0), o.payment, plain(o.total)]));
+    const rows = L.invoices.filter((x) => inRange(x.date, from, to));
+    const total = rows.filter((x) => x.currency === 'UGX').reduce((s, x) => s + x.total, 0);
+    const exp = () => downloadCSV('delivered.csv',
+      ['Reference', 'Source', 'Client', 'Delivered', 'Currency', 'Total', 'Paid', 'Balance', 'Payment status'],
+      rows.map((x) => [x.ref, x.type === 'order' ? 'Order' : 'Delivery note', x.clientName, x.date, x.currency, plain(x.total), plain(x.paid), plain(x.balance), x.status]));
     return (
-      <ReportSection title="Delivered Orders" sub={`${rows.length} order${rows.length === 1 ? '' : 's'} · ${A_money(total)} fulfilled`}
+      <ReportSection title="Delivered" sub={`${rows.length} deliver${rows.length === 1 ? 'y' : 'ies'} · ${A_money(total)} delivered`}
         controls={<DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />} onExport={exp} exportDisabled={!rows.length}>
-        {rows.length === 0 ? <Empty icon="truck" title="No delivered orders" sub="Adjust the date range to see results." /> : (
-          <Table columns={[{ label: 'Order ID' }, { label: 'Client' }, { label: 'Date' }, { label: 'Payment' }, { label: 'Total', align: 'right' }]}>
-            {rows.map((o, i) => (
-              <Row key={o.id} i={i}>
-                <Td style={{ fontWeight: 800 }}>{o.id}</Td>
-                <Td style={{ fontWeight: 700 }}>{o.clientName}</Td>
-                <Td style={{ color: T.sub, fontWeight: 600 }}>{A_fmtDate(o.date)}</Td>
-                <Td style={{ fontWeight: 700 }}>{o.payment}</Td>
-                <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{A_money(o.total)}</Td>
+        {rows.length === 0 ? <Empty icon="truck" title="Nothing delivered" sub="Orders and delivery notes marked Delivered appear here." /> : (
+          <Table columns={[{ label: 'Reference' }, { label: 'Client' }, { label: 'Delivered' }, { label: 'Total', align: 'right' }, { label: 'Balance', align: 'right' }, { label: 'Payment', align: 'right' }]}>
+            {rows.map((x, i) => (
+              <Row key={x.key} i={i}>
+                <Td><div style={{ fontWeight: 800 }}>{x.ref}</div><div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 2 }}>{x.type === 'order' ? 'Online order' : 'Delivery note' + (x.quote ? ' · ' + x.quote : '')}</div></Td>
+                <Td style={{ fontWeight: 700 }}>{x.clientName}</Td>
+                <Td style={{ color: T.sub, fontWeight: 600 }}>{A_fmtDate(x.date)}</Td>
+                <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{x.total > 0 ? fmt(x.total, x.currency) : '—'}</Td>
+                <Td align="right" style={{ fontWeight: 800, color: x.balance > 0 ? T.red : T.green, fontVariantNumeric: 'tabular-nums' }}>{fmt(x.balance, x.currency)}</Td>
+                <Td align="right"><PayPill status={x.status} /></Td>
               </Row>
             ))}
           </Table>
         )}
       </ReportSection>
+    );
+  }
+
+  // ═══════════════════════════ PENDING PAYMENTS ════════════════════════════
+  // Accounts receivable: everything delivered that isn't fully paid. An admin
+  // approves part or full payment; each approval issues a receipt.
+  function ReceivablesReport() {
+    const L = window.KG_useLedger();
+    const fmt = window.KG_fmtLedger, PayPill = window.KG_PayPill, PayModal = window.KG_RecordPaymentModal;
+    const [q, setQ] = React.useState('');
+    const [st, setSt] = React.useState('Outstanding');
+    const [src, setSrc] = React.useState('All');
+    const [from, setFrom] = React.useState('');
+    const [to, setTo] = React.useState('');
+    const [open, setOpen] = React.useState(null);
+    const term = q.trim().toLowerCase();
+    const rows = L.invoices.filter((x) => {
+      if (st === 'Outstanding' ? x.status === 'Paid' : (st !== 'All' && x.status !== st)) return false;
+      if (src !== 'All' && x.type !== (src === 'Orders' ? 'order' : 'dn')) return false;
+      if (term && !(x.ref + ' ' + x.clientName + ' ' + (x.quote || '')).toLowerCase().includes(term)) return false;
+      return inRange(x.date, from, to);
+    }).sort((a, b) => b.age - a.age);
+    const ugx = L.invoices.filter((x) => x.currency === 'UGX');
+    const outstanding = ugx.reduce((s, x) => s + x.balance, 0);
+    const month = new Date().toISOString().slice(0, 7);
+    const collectedMonth = L.payments.filter((p) => p.currency === 'UGX' && (p.date || '').startsWith(month)).reduce((s, p) => s + p.amount, 0);
+    const overdue = L.invoices.filter((x) => x.status !== 'Paid' && x.age > 30).length;
+    const cards = [
+      { label: 'Outstanding balance', value: A_money(outstanding), c: outstanding > 0 ? T.red : T.green },
+      { label: 'Pending payment', value: L.invoices.filter((x) => x.status === 'Pending payment' || x.status === 'Amount needed').length, c: T.ink },
+      { label: 'Partially paid', value: L.invoices.filter((x) => x.status === 'Partially paid').length, c: T.ink },
+      { label: 'Over 30 days', value: overdue, c: overdue ? T.red : T.ink },
+      { label: 'Collected this month', value: A_money(collectedMonth), c: T.green },
+    ];
+    const exp = () => downloadCSV('pending-payments.csv',
+      ['Reference', 'Source', 'Client', 'Delivered', 'Days outstanding', 'Currency', 'Total', 'Paid', 'Balance', 'Status'],
+      rows.map((x) => [x.ref, x.type === 'order' ? 'Order' : 'Delivery note', x.clientName, x.date, x.age, x.currency, plain(x.total), plain(x.paid), plain(x.balance), x.status]));
+    const cur = open ? L.invoices.find((x) => x.key === open) : null;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          {cards.map((c) => (
+            <Card key={c.label} style={{ padding: '14px 16px' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: T.sub, textTransform: 'uppercase', letterSpacing: 0.5 }}>{c.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: c.c, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>{c.value}</div>
+            </Card>
+          ))}
+        </div>
+        <ReportSection title="Pending Payments" sub={`${rows.length} shown · delivered orders and delivery notes awaiting payment approval`}
+          controls={<div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <Search value={q} onChange={setQ} placeholder="Search ref, client…" width={200} />
+            <Select value={st} onChange={setSt} options={['Outstanding', 'Pending payment', 'Partially paid', 'Amount needed', 'Paid', 'All']} width={170} />
+            <Select value={src} onChange={setSrc} options={['All', 'Orders', 'Delivery notes']} width={150} />
+            <DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />
+          </div>} onExport={exp} exportDisabled={!rows.length}>
+          {rows.length === 0 ? <Empty icon="check" title={st === 'Outstanding' ? 'All payments are up to date' : 'Nothing matches'} sub="Delivered orders and delivery notes wait here until payment is approved." /> : (
+            <Table columns={[{ label: 'Reference' }, { label: 'Client' }, { label: 'Delivered' }, { label: 'Total', align: 'right' }, { label: 'Paid', align: 'right' }, { label: 'Balance', align: 'right' }, { label: 'Status' }, { label: '', align: 'right', width: 170 }]}>
+              {rows.map((x, i) => (
+                <Row key={x.key} i={i} onClick={() => setOpen(x.key)}>
+                  <Td><div style={{ fontWeight: 800 }}>{x.ref}</div><div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 2 }}>{x.type === 'order' ? 'Online order' : 'Delivery note' + (x.quote ? ' · ' + x.quote : '')}</div></Td>
+                  <Td style={{ fontWeight: 700 }}>{x.clientName}</Td>
+                  <Td><div style={{ color: T.sub, fontWeight: 600 }}>{A_fmtDate(x.date)}</div>{x.status !== 'Paid' && <div style={{ fontSize: 11.5, fontWeight: 800, color: x.age > 30 ? T.red : T.faint, marginTop: 2 }}>{x.age} day{x.age === 1 ? '' : 's'}</div>}</Td>
+                  <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{x.total > 0 ? fmt(x.total, x.currency) : '—'}</Td>
+                  <Td align="right" style={{ fontWeight: 700, color: T.green, fontVariantNumeric: 'tabular-nums' }}>{fmt(x.paid, x.currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 800, color: x.balance > 0 ? T.red : T.green, fontVariantNumeric: 'tabular-nums' }}>{fmt(x.balance, x.currency)}</Td>
+                  <Td><PayPill status={x.status} /></Td>
+                  <Td align="right"><div onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex' }}>
+                    {x.status === 'Paid'
+                      ? <Button size="sm" variant="ghost" icon="doc" onClick={() => setOpen(x.key)}>History</Button>
+                      : <Button size="sm" variant="primary" icon="check" onClick={() => setOpen(x.key)}>Record payment</Button>}
+                  </div></Td>
+                </Row>
+              ))}
+            </Table>
+          )}
+        </ReportSection>
+        {cur && <PayModal inv={cur} onClose={() => setOpen(null)} />}
+      </div>
     );
   }
 
@@ -206,35 +287,47 @@
   }
 
   // ═══════════════════════════════ PAYMENTS ════════════════════════════════
-  // Orders with status Delivered are treated as Paid (per spec).
-  function PaymentsReport({ d }) {
+  // Every approved payment (receipt) plus verified online checkout payments.
+  function PaymentsReport() {
+    const L = window.KG_useLedger();
+    const fmt = window.KG_fmtLedger;
     const [from, setFrom] = React.useState('');
     const [to, setTo] = React.useState('');
     const [method, setMethod] = React.useState('All');
-    let rows = d.orders.filter((o) => o.status === 'Delivered' && inRange(o.date, from, to));
-    if (method !== 'All') rows = rows.filter((o) => o.payment === method);
-    rows = rows.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const total = rows.reduce((s, o) => s + o.total, 0);
-    const methods = ['All', ...window.A_PAYMENTS];
+    const inDates = L.payments.filter((p) => inRange(p.date, from, to));
+    const rows = method === 'All' ? inDates : inDates.filter((p) => p.method === method);
+    const total = rows.filter((p) => p.currency === 'UGX').reduce((s, p) => s + p.amount, 0);
+    const methods = ['All', ...Array.from(new Set([...(window.KG_PAY_METHODS || []), ...L.payments.map((p) => p.method)]))];
+    const byMethod = {}; inDates.filter((p) => p.currency === 'UGX').forEach((p) => { byMethod[p.method] = (byMethod[p.method] || 0) + p.amount; });
     const exp = () => downloadCSV('payments.csv',
-      ['Order ID', 'Client', 'Date', 'Method', 'Status', 'Amount (UGX)'],
-      rows.map((o) => [o.id, o.clientName, o.date, o.payment, 'Paid', plain(o.total)]));
+      ['Receipt', 'Date', 'Client', 'For', 'Method', 'Reference', 'Type', 'Currency', 'Amount'],
+      rows.map((p) => [p.number, p.date, p.clientName, p.ref, p.method, p.reference, p.type, p.currency, plain(p.amount)]));
     return (
-      <ReportSection title="Payments" sub={`${rows.length} completed payment${rows.length === 1 ? '' : 's'} · ${A_money(total)} received`}
+      <ReportSection title="Payments" sub={`${rows.length} payment${rows.length === 1 ? '' : 's'} · ${A_money(total)} received`}
         controls={<div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Select value={method} onChange={setMethod} options={methods.map((m) => ({ value: m, label: m === 'All' ? 'All methods' : m }))} width={160} />
+          <Select value={method} onChange={setMethod} options={methods.map((m) => ({ value: m, label: m === 'All' ? 'All methods' : m }))} width={170} />
           <DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />
         </div>} onExport={exp} exportDisabled={!rows.length}>
-        {rows.length === 0 ? <Empty icon="shield" title="No payments" sub="Completed payments come from delivered orders." /> : (
-          <Table columns={[{ label: 'Order ID' }, { label: 'Client' }, { label: 'Date' }, { label: 'Method' }, { label: 'Status' }, { label: 'Amount', align: 'right' }]}>
-            {rows.map((o, i) => (
-              <Row key={o.id} i={i}>
-                <Td style={{ fontWeight: 800 }}>{o.id}</Td>
-                <Td style={{ fontWeight: 700 }}>{o.clientName}</Td>
-                <Td style={{ color: T.sub, fontWeight: 600 }}>{A_fmtDate(o.date)}</Td>
-                <Td style={{ fontWeight: 700 }}>{o.payment}</Td>
-                <Td><span style={{ fontSize: 11.5, fontWeight: 800, color: T.green, background: T.greenWash, padding: '4px 10px', borderRadius: 999 }}>Paid</span></Td>
-                <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{A_money(o.total)}</Td>
+        {Object.keys(byMethod).length > 0 && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', padding: '14px 18px', borderBottom: `1px solid ${T.line}` }}>
+          {Object.entries(byMethod).sort((a, b) => b[1] - a[1]).map(([m, v]) => (
+            <button key={m} onClick={() => setMethod(method === m ? 'All' : m)} style={{ border: `1.5px solid ${method === m ? T.blue : T.line}`, background: method === m ? T.blueWash : '#fff', borderRadius: 12, padding: '8px 12px', cursor: 'pointer', fontFamily: F, textAlign: 'left' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: T.sub }}>{m}</div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, fontVariantNumeric: 'tabular-nums' }}>{A_money(v)}</div>
+            </button>
+          ))}
+        </div>}
+        {rows.length === 0 ? <Empty icon="shield" title="No payments" sub="Approved payments from Pending Payments appear here." /> : (
+          <Table columns={[{ label: 'Receipt' }, { label: 'Date' }, { label: 'Client' }, { label: 'For' }, { label: 'Method' }, { label: 'Type' }, { label: 'Amount', align: 'right' }, { label: '', align: 'right' }]}>
+            {rows.map((p, i) => (
+              <Row key={p.id} i={i}>
+                <Td style={{ fontWeight: 800 }}>{p.number}</Td>
+                <Td style={{ color: T.sub, fontWeight: 600 }}>{A_fmtDate(p.date)}</Td>
+                <Td style={{ fontWeight: 700 }}>{p.clientName}</Td>
+                <Td style={{ fontWeight: 700 }}>{p.ref}</Td>
+                <Td><div style={{ fontWeight: 700 }}>{p.method}</div>{p.reference && <div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 2 }}>{p.reference}</div>}</Td>
+                <Td><span style={{ fontSize: 11.5, fontWeight: 800, color: p.type === 'Full' ? T.green : T.blueDk || T.blue, background: p.type === 'Full' ? T.greenWash : T.blueWash, padding: '4px 10px', borderRadius: 999 }}>{p.type === 'Full' ? 'Full' : 'Part'}</span></Td>
+                <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{fmt(p.amount, p.currency)}</Td>
+                <Td align="right">{p.receipt && window.KG_printReceipt && <window.IconBtn icon="download" tone="blue" title="Print receipt" onClick={() => window.KG_printReceipt(p.receipt)} />}</Td>
               </Row>
             ))}
           </Table>
@@ -245,32 +338,36 @@
 
   // ═══════════════════════════════ ACCOUNTS ════════════════════════════════
   function AccountsReport({ d }) {
+    const L = window.KG_useLedger();
+    const ugxInv = L.invoices.filter((x) => x.currency === 'UGX');
+    const invoiced = ugxInv.reduce((s, x) => s + x.total, 0);
+    const collected = L.payments.filter((p) => p.currency === 'UGX').reduce((s, p) => s + p.amount, 0);
+    const outstanding = ugxInv.reduce((s, x) => s + x.balance, 0);
+    const openInv = L.invoices.filter((x) => x.status !== 'Paid');
+    const overdue = openInv.filter((x) => x.age > 30);
     const valid = d.orders.filter((o) => o.status !== 'Cancelled');
-    const revenue = valid.reduce((s, o) => s + o.total, 0);
-    const delivered = d.orders.filter((o) => o.status === 'Delivered');
-    const paid = delivered.reduce((s, o) => s + o.total, 0);
-    const outstanding = valid.filter((o) => o.status !== 'Delivered').reduce((s, o) => s + o.total, 0);
-    const aov = valid.length ? revenue / valid.length : 0;
+    const pipeline = valid.filter((o) => o.status !== 'Delivered').reduce((s, o) => s + o.total, 0);
     const cancelled = d.orders.filter((o) => o.status === 'Cancelled');
     const lowStock = d.products.filter((p) => p.stock < 5).length;
+    const rate = invoiced ? Math.round((collected / invoiced) * 100) : 0;
     const cards = [
-      { icon: 'shield', label: 'Total Revenue', value: A_money(revenue), accent: T.green, note: 'Excludes cancelled orders' },
-      { icon: 'check', label: 'Paid / Collected', value: A_money(paid), accent: T.blue, note: `${delivered.length} delivered orders` },
-      { icon: 'clock', label: 'Outstanding', value: A_money(outstanding), accent: T.amber, note: 'Awaiting delivery' },
-      { icon: 'cart', label: 'Total Orders', value: valid.length, accent: T.purple, note: `${cancelled.length} cancelled` },
-      { icon: 'box', label: 'Avg. Order Value', value: A_money(aov), accent: T.blueDk, note: 'Per fulfilled order' },
+      { icon: 'truck', label: 'Delivered (invoiced)', value: A_money(invoiced), accent: T.blue, note: `${L.invoices.length} orders & delivery notes` },
+      { icon: 'check', label: 'Collected', value: A_money(collected), accent: T.green, note: `${L.payments.length} payments · ${rate}% of invoiced` },
+      { icon: 'clock', label: 'Outstanding', value: A_money(outstanding), accent: T.amber, note: `${openInv.length} awaiting payment` },
+      { icon: 'bolt', label: 'Over 30 days', value: A_money(overdue.filter((x) => x.currency === 'UGX').reduce((s, x) => s + x.balance, 0)), accent: T.red, note: `${overdue.length} account${overdue.length === 1 ? '' : 's'}` },
+      { icon: 'cart', label: 'Orders in pipeline', value: A_money(pipeline), accent: T.purple, note: `Not yet delivered · ${cancelled.length} cancelled` },
       { icon: 'user', label: 'Active Clients', value: d.clients.filter((c) => c.status === 'Active').length, accent: T.teal, note: `${d.clients.length} total` },
       { icon: 'package', label: 'Catalogue Size', value: d.products.length, accent: T.blue, note: `${lowStock} low on stock` },
-      { icon: 'truck', label: 'Delivered Rate', value: valid.length ? Math.round((delivered.length / valid.length) * 100) + '%' : '—', accent: T.green, note: 'Of fulfilled orders' },
+      { icon: 'box', label: 'Avg. Delivery Value', value: A_money(ugxInv.length ? invoiced / ugxInv.length : 0), accent: T.blueDk, note: 'Per delivered order / note' },
     ];
-    const exp = () => downloadCSV('accounts-summary.csv',
-      ['Metric', 'Value'],
-      [['Total Revenue (UGX)', plain(revenue)], ['Paid / Collected (UGX)', plain(paid)], ['Outstanding (UGX)', plain(outstanding)],
-       ['Total Orders', valid.length], ['Cancelled Orders', cancelled.length], ['Average Order Value (UGX)', plain(aov)],
+    const exp = () => downloadCSV('accounts-summary.csv', ['Metric', 'Value'],
+      [['Delivered / Invoiced (UGX)', plain(invoiced)], ['Collected (UGX)', plain(collected)], ['Outstanding (UGX)', plain(outstanding)],
+       ['Accounts awaiting payment', openInv.length], ['Over 30 days', overdue.length], ['Collection rate %', rate],
+       ['Orders in pipeline (UGX)', plain(pipeline)], ['Cancelled Orders', cancelled.length],
        ['Active Clients', d.clients.filter((c) => c.status === 'Active').length], ['Total Clients', d.clients.length],
        ['Catalogue Size', d.products.length], ['Low Stock Items', lowStock]]);
     return (
-      <ReportSection title="Accounts Summary" sub="Revenue, collections and fulfilment at a glance" onExport={exp}>
+      <ReportSection title="Accounts Summary" sub="Deliveries, collections and outstanding balances — updates as payments are approved" onExport={exp}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, padding: 18 }}>
           {cards.map((c) => (
             <div key={c.label} style={{ border: `1px solid ${T.line}`, borderRadius: 14, padding: '16px 16px' }}>
@@ -290,11 +387,12 @@
   // ════════════════════════════════ SHELL ══════════════════════════════════
   const TABS = [
     { id: 'overview', label: 'Overview', icon: 'filter' },
-    { id: 'clients', label: 'Client List', icon: 'user' },
-    { id: 'delivered', label: 'Delivered', icon: 'truck' },
-    { id: 'pending', label: 'Pending', icon: 'clock' },
-    { id: 'products', label: 'Products & Stock', icon: 'package' },
+    { id: 'receivables', label: 'Pending Payments', icon: 'clock' },
     { id: 'payments', label: 'Payments', icon: 'shield' },
+    { id: 'delivered', label: 'Delivered', icon: 'truck' },
+    { id: 'pending', label: 'Pending Orders', icon: 'cart' },
+    { id: 'clients', label: 'Client List', icon: 'user' },
+    { id: 'products', label: 'Products & Stock', icon: 'package' },
     { id: 'accounts', label: 'Accounts', icon: 'box' },
   ];
 
@@ -316,6 +414,7 @@
         </div>
         {tab === 'overview' && (window.AdminReportsOverview ? <window.AdminReportsOverview embedded /> : null)}
         {tab === 'clients' && <ClientsReport d={d} />}
+        {tab === 'receivables' && <ReceivablesReport />}
         {tab === 'delivered' && <DeliveredReport d={d} />}
         {tab === 'pending' && <PendingReport d={d} />}
         {tab === 'products' && <ProductsReport d={d} />}
