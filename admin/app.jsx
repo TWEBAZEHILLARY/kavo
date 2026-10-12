@@ -179,7 +179,8 @@
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Header onMenu={() => setMenu(true)} />
           <main style={{ flex: 1, padding: '24px 28px 60px', maxWidth: 1320, width: '100%', margin: '0 auto' }}>
-            <View key={view} />
+            <div className="adm-view"><View key={view} /></div>
+            <div id="adm-panel-host"></div>
           </main>
         </div>
         <ToastHost />

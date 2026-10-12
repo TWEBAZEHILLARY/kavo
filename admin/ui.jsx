@@ -168,7 +168,48 @@
   const Textarea = (props) => <textarea {...props} style={{ ...fieldCss, resize: 'vertical', lineHeight: 1.5, ...(props.style || {}) }} />;
 
   // ── Modal shell ─────────────────────────────────────────────────────────
-  function Modal({ title, sub, onClose, width = 640, children, footer }) {
+  // Panels open inline in the main content area (replacing the page view)
+  // instead of as popups. A stack keeps nested panels working: only the top
+  // one is visible; closing it reveals the one beneath, then the page.
+  const PanelStack = (() => { let ids = []; const subs = new Set(); const emit = () => { document.body.classList.toggle('adm-panel-open', ids.length > 0); subs.forEach((f) => f(ids)); };
+    return { push: (id) => { ids = [...ids, id]; emit(); }, pop: (id) => { ids = ids.filter((x) => x !== id); emit(); }, top: () => ids[ids.length - 1], sub: (f) => { subs.add(f); return () => subs.delete(f); } }; })();
+  let panelSeq = 0;
+  function Modal(props) {
+    const host = document.getElementById('adm-panel-host');
+    if (props.popup || !host) return <PopupModal {...props} />;
+    return ReactDOM.createPortal(<InlinePanel {...props} />, host);
+  }
+  function InlinePanel({ title, sub, onClose, width = 640, children, footer }) {
+    const idRef = React.useRef(null); if (idRef.current == null) idRef.current = ++panelSeq;
+    const [top, setTop] = React.useState(true);
+    const closeRef = React.useRef(onClose); closeRef.current = onClose;
+    React.useLayoutEffect(() => {
+      const id = idRef.current, y = window.scrollY;
+      PanelStack.push(id);
+      const off = PanelStack.sub(() => setTop(PanelStack.top() === id));
+      setTop(true); window.scrollTo(0, 0);
+      const onKey = (e) => { if (e.key === 'Escape' && PanelStack.top() === id) closeRef.current(); };
+      window.addEventListener('keydown', onKey);
+      return () => { off(); window.removeEventListener('keydown', onKey); PanelStack.pop(id); requestAnimationFrame(() => window.scrollTo(0, y)); };
+    }, []);
+    const inner = width < 900 ? 900 : 'none';
+    return (
+      <div style={{ display: top ? 'block' : 'none', background: '#fff', border: `1px solid ${T.line}`, borderRadius: 16, fontFamily: F, color: T.ink, animation: 'aFade .16s ease' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 22px', borderBottom: `1px solid ${T.line}` }}>
+          <button onClick={onClose} title="Back" style={{ flexShrink: 0, height: 36, padding: '0 12px 0 9px', borderRadius: 10, border: `1px solid ${T.line}`, background: '#fff', color: T.sub, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>Back</button>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4 }}>{title}</div>
+            {sub && <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, marginTop: 2 }}>{sub}</div>}
+          </div>
+        </div>
+        <div style={{ padding: 22 }}><div style={{ maxWidth: inner }}>{children}</div></div>
+        {footer && <div style={{ position: 'sticky', bottom: 0, zIndex: 5, borderTop: `1px solid ${T.line}`, padding: '15px 22px', background: T.surface, borderRadius: '0 0 16px 16px' }}>
+          <div style={{ maxWidth: inner, display: 'flex', gap: 11, justifyContent: 'flex-end', alignItems: 'center' }}>{footer}</div></div>}
+      </div>
+    );
+  }
+  function PopupModal({ title, sub, onClose, width = 640, children, footer }) {
     React.useEffect(() => {
       const onKey = (e) => { if (e.key === 'Escape') onClose(); };
       window.addEventListener('keydown', onKey);
@@ -201,7 +242,7 @@
     React.useEffect(() => ConfirmStore.sub(setCfg), []);
     if (!cfg) return null;
     return (
-      <Modal title={cfg.title} sub={cfg.sub} width={420} onClose={ConfirmStore.close}
+      <Modal popup title={cfg.title} sub={cfg.sub} width={420} onClose={ConfirmStore.close}
         footer={<React.Fragment>
           <Button variant="ghost" onClick={ConfirmStore.close}>Cancel</Button>
           <Button variant={cfg.danger ? 'danger' : 'primary'} icon={cfg.danger ? 'minus' : 'check'} onClick={() => { cfg.onConfirm(); ConfirmStore.close(); }}>{cfg.confirmLabel || 'Confirm'}</Button>
