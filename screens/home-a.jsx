@@ -462,6 +462,8 @@
           </div>
         </div>
         <CategoryDrawer open={isMobile && drawer} onClose={() => setDrawer(false)} openCat={openCat} trackOrder={trackOrder} returnRef={catBtnRef} />
+        <div id="pps-inline-host"></div>
+        <div className="ka-home-body">
 
         {/* hero */}
         <div className="ka-hero ka-gut" style={{ padding: '24px 40px 0', display: 'grid', gridTemplateColumns: '236px 1fr', gap: 18 }}>
@@ -555,6 +557,7 @@
           </div>
         </div>
 
+        </div>
         {/* footer */}
         <div className="ka-footer ka-gut" style={{ marginTop: 40, background: T.ink, color: 'rgba(255,255,255,.7)', padding: '40px 40px 28px' }}>
           <div className="ka-footer-grid" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr', gap: 30, paddingBottom: 28, borderBottom: '1px solid rgba(255,255,255,.12)' }}>
