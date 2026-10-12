@@ -193,12 +193,24 @@
   }
 
   // ── Modal store (single active modal + optional payload) ──
+  // Inline pages keep a back-stack so "Back" returns to the previous view
+  // (e.g. Product → Catalogue) and finally to the page scroll position.
   const ModalStore = (() => {
-    let cur = null; let data = null; const subs = new Set();
+    let cur = null; let data = null; let stack = []; let baseY = 0; const subs = new Set();
     const emit = () => subs.forEach((f) => f(cur));
+    const restore = () => requestAnimationFrame(() => window.scrollTo(0, baseY));
     return {
-      open: (k, d = null) => { cur = k; data = d; emit(); },
-      close: () => { cur = null; data = null; emit(); },
+      open: (k, d = null) => {
+        if (cur == null) { baseY = window.scrollY; stack = []; }
+        else if (cur !== 'checkout') stack.push({ k: cur, d: data, y: window.scrollY });
+        cur = k; data = d; emit();
+      },
+      close: () => { const was = cur; cur = null; data = null; stack = []; emit(); if (was) restore(); },
+      back: () => {
+        const prev = stack.pop();
+        if (!prev) { cur = null; data = null; emit(); restore(); return; }
+        cur = prev.k; data = prev.d; emit(); requestAnimationFrame(() => window.scrollTo(0, prev.y));
+      },
       get: () => cur, getData: () => data,
       sub: (f) => { subs.add(f); return () => subs.delete(f); },
     };
@@ -207,7 +219,35 @@
   const tone = { ok: T.green, warn: T.amber, error: T.red, info: T.blue };
 
   // ── Shared modal shell ──
-  function Overlay({ children, width = 1040, onClose }) {
+  const InlineCtx = React.createContext(false);
+  function Overlay(props) {
+    const host = document.getElementById('pps-inline-host');
+    if (host && (props.width || 1040) > 440) return ReactDOM.createPortal(<InlinePage {...props} />, host);
+    return <PopupOverlay {...props} />;
+  }
+  function InlinePage({ children, width = 1040 }) {
+    React.useLayoutEffect(() => {
+      document.body.classList.add('pps-inline-open');
+      window.scrollTo(0, 0);
+      return () => document.body.classList.remove('pps-inline-open');
+    }, []);
+    const full = width >= 1000;
+    return (
+      <InlineCtx.Provider value={true}>
+        <div className="ka-gut" style={{ padding: '24px 40px 0' }}>
+          <div style={{ maxWidth: full ? 'none' : width + 120, margin: '0 auto', display: 'flex', flexDirection: 'column', background: '#fff', border: `1px solid ${T.line}`, borderRadius: 16, overflow: 'hidden', fontFamily: F, color: T.ink, animation: 'ppsFade .16s ease' }}>
+            {children}
+          </div>
+        </div>
+      </InlineCtx.Provider>
+    );
+  }
+  function PopupOverlay({ children, width = 1040, onClose }) {
+    React.useEffect(() => {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = prev; };
+    }, []);
     return (
       <div onMouseDown={onClose}
         style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(11,26,51,.55)', WebkitBackdropFilter: 'blur(3px)', backdropFilter: 'blur(3px)',
@@ -221,17 +261,20 @@
     );
   }
   function ModalHead({ title, sub, children, onClose }) {
+    const inline = React.useContext(InlineCtx);
     return (
-      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 16, padding: '18px 22px', borderBottom: `1px solid ${T.line}` }}>
+      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', flexWrap: inline ? 'wrap' : 'nowrap', gap: 16, padding: '18px 22px', borderBottom: `1px solid ${T.line}` }}>
+        {inline && <button onClick={() => ModalStore.back()} title="Back" style={{ flexShrink: 0, height: 38, padding: '0 14px 0 10px', borderRadius: 10, border: `1px solid ${T.line}`, background: '#fff', color: T.sub, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: F, fontSize: 13.5, fontWeight: 700 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>Back</button>}
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>{title}</div>
           {sub && <div style={{ fontSize: 13, color: T.sub, fontWeight: 600, marginTop: 2 }}>{sub}</div>}
         </div>
         <div style={{ flex: 1 }} />
         {children}
-        <button onClick={onClose} aria-label="Close" style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.line}`, background: '#fff', color: T.sub, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {!inline && <button onClick={onClose} aria-label="Close" style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.line}`, background: '#fff', color: T.sub, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-        </button>
+        </button>}
       </div>
     );
   }
@@ -2001,18 +2044,15 @@
   // ── Host: renders active modal + toasts, manages body scroll lock ──
   function CommerceHost() {
     const [cur, setCur] = React.useState(ModalStore.get());
-    React.useEffect(() => ModalStore.sub(setCur), []);
+    const [ver, setVer] = React.useState(0);
+    React.useEffect(() => ModalStore.sub((k) => { setCur(k); setVer((v) => v + 1); }), []);
     React.useEffect(() => {
-      const onKey = (e) => { if (e.key === 'Escape') ModalStore.close(); };
+      const onKey = (e) => { if (e.key !== 'Escape') return; if (document.body.classList.contains('pps-inline-open')) ModalStore.back(); else ModalStore.close(); };
       window.addEventListener('keydown', onKey);
       return () => window.removeEventListener('keydown', onKey);
     }, []);
-    React.useEffect(() => {
-      document.body.style.overflow = cur ? 'hidden' : '';
-      return () => { document.body.style.overflow = ''; };
-    }, [cur]);
     return (
-      <React.Fragment>
+      <React.Fragment key={ver}>
         {cur === 'catalogue' && <CatalogueModal />}
         {cur === 'cart' && <CartModal />}
         {cur === 'checkout' && <CheckoutModal />}
