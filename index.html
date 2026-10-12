@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -11,15 +10,17 @@
 <meta property="og:title" content="KAVO Grid" />
 <meta property="og:description" content="Electrical supplies catalogue, quotes and order tracking." />
 <meta property="og:url" content="https://kavogrid.org/" />
+<meta property="og:type" content="website" />
 <meta property="og:image" content="https://kavogrid.org/images/brand/og-image.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:image" content="https://kavogrid.org/images/brand/og-image.png" />
-<meta property="og:image" content="https://kavogrid.org/images/brand/app-icon-512.png" />
 <meta name="theme-color" content="#0B1A33" />
 <link rel="icon" href="/images/brand/app-icon-192.png" />
 <link rel="apple-touch-icon" href="/images/brand/app-icon-192.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"KAVO Grid","url":"https://kavogrid.org/","logo":"https://kavogrid.org/images/brand/app-icon-512.png","image":"https://kavogrid.org/images/brand/og-image.png"}</script>
+<link rel="image_src" href="https://kavogrid.org/images/brand/og-image.png" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -291,7 +292,7 @@
   // Cloud sync (lib/cloud-sync.js): when one of these keys is pulled from the
   // Cloudflare D1 database, reload so the storefront re-reads it. Orders are NOT
   // listed — they're read fresh each time the Track Order modal opens.
-  window.PPS_SYNC_RELOAD_KEYS = ['pps_products', 'pps_currency_rates', 'pps_hero_media'];
+  window.PPS_SYNC_RELOAD_KEYS = ['pps_products', 'pps_currency_rates', 'pps_hero_media', 'pps_coming_soon'];
 </script>
 <script src="lib/cloud-sync.js"></script>
 </body>
