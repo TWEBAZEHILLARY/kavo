@@ -14,6 +14,7 @@
     phone: '+256764250125',
     email: 'kavogrid@gmail.com',
     web: 'kavogrid.org',
+    tin: '1059988191',
   };
 
   const money = (n) => 'USh ' + Math.round(n || 0).toLocaleString('en-US');
@@ -189,6 +190,7 @@
           <div>${esc(COMPANY.postal)}</div>
           <div>${esc(COMPANY.phone)}</div>
           <div>${esc(COMPANY.email)} · ${esc(COMPANY.web)}</div>
+          <div><strong>TIN: ${esc(COMPANY.tin)}</strong></div>
         </div>
       </div>
 
@@ -236,7 +238,7 @@
       </div>
 
       <div class="rcpt-thanks">Thank you for your business!</div>
-      <div class="rcpt-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.postal)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.email)} · ${esc(COMPANY.web)}</div>
+      <div class="rcpt-foot">${esc(COMPANY.name)} · ${esc(COMPANY.address)} · ${esc(COMPANY.postal)} · ${esc(COMPANY.phone)} · ${esc(COMPANY.email)} · ${esc(COMPANY.web)} · TIN ${esc(COMPANY.tin)}</div>
     </div>`;
   }
 
