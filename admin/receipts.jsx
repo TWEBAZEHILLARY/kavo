@@ -122,7 +122,11 @@ ${balance > 0 ? `<div class="trow"><span>Balance due</span><strong class="bal">$
     document.body.appendChild(f);
     const doc = f.contentDocument;
     doc.open(); doc.write(receiptHTML(r)); doc.close();
-    setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) {} }, 320);
+    const prevTitle = document.title;
+    if (r && r.number) { document.title = r.number; doc.title = r.number; }
+    const restore = () => { document.title = prevTitle; };
+    try { f.contentWindow.addEventListener('afterprint', () => setTimeout(restore, 400)); } catch (e) {}
+    setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { restore(); } }, 320);
   }
 
   // ── Editor ───────────────────────────────────────────────────────────────
