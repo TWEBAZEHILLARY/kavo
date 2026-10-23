@@ -56,26 +56,58 @@ function sameOrigin(req, url) {
   try { return new URL(o).host === url.host; } catch (e) { return false; }
 }
 
-// Non-admin write to a customer list: add new records / update existing ones
-// by id, never drop records the visitor's browser doesn't have.
-function mergeList(oldJson, newJson) {
+// ── Customer-list merging (orders, clients, inquiries) ────────────────────
+// Every browser numbers new records from its own copy, so two customers on
+// different devices can both create "#KG-0007". The server detects that (same
+// id, different customer) and gives the newcomer the next free number instead
+// of overwriting. Visitors can only ADD records (and reply on inquiries); they
+// can never change or remove existing ones. A stale admin write keeps any
+// records that arrived after the admin's last refresh.
+const ID_RULES = {
+  pps_orders: { re: /^#(?:PPS|KG)-(\d+)$/, make: (n) => '#KG-' + String(n).padStart(4, '0'), who: (x) => [String(x.customerEmail || x.clientId || x.clientName || '').toLowerCase(), x.date || ''].join('|') },
+  pps_clients: { re: /^client_(\d+)$/, make: (n) => 'client_' + String(n).padStart(3, '0'), who: (x) => String(x.email || '').trim().toLowerCase() },
+  pps_inquiries: { re: /^#INQ-(\d+)$/, make: (n) => '#INQ-' + n, who: (x) => [String(x.email || '').toLowerCase(), x.subject || '', x.date || ''].join('|') },
+};
+const idOf = (x) => x && (x.id != null && x.id !== '' ? String(x.id) : (x.email ? 'e:' + String(x.email).toLowerCase() : null));
+function mergeThreads(a, b) {
+  const t = new Map();
+  (a || []).forEach((m) => t.set(m && m.id != null ? String(m.id) : JSON.stringify(m), m));
+  (b || []).forEach((m) => {
+    const k = m && m.id != null ? String(m.id) : JSON.stringify(m), p = t.get(k);
+    if (!p) { t.set(k, m); return; }
+    const o = { ...p, ...m }; Object.keys(o).forEach((f) => { if (/^readBy/.test(f)) o[f] = !!(p[f] || m[f]); }); t.set(k, o);
+  });
+  return [...t.values()];
+}
+function mergeList(key, oldJson, newJson, mode) {
   let a, b;
   try { a = JSON.parse(oldJson); b = JSON.parse(newJson); } catch (e) { return null; }
   if (!Array.isArray(a) || !Array.isArray(b)) return null;
-  const idOf = (x) => x && (x.id != null ? String(x.id) : (x.email ? 'e:' + String(x.email).toLowerCase() : null));
-  const byId = new Map(); a.forEach((x) => { const k = idOf(x); if (k) byId.set(k, x); });
-  const out = [], seen = new Set();
+  const rule = ID_RULES[key];
+  if (mode === 'admin') {
+    const mine = new Set(b.map(idOf).filter(Boolean));
+    const extra = a.filter((x) => { const k = idOf(x); return k && !mine.has(k); });
+    return JSON.stringify(extra.concat(b));
+  }
+  const out = a.slice(), pos = new Map();
+  out.forEach((x, i) => { const k = idOf(x); if (k) pos.set(k, i); });
+  let max = 0;
+  if (rule) out.concat(b).forEach((x) => { const m = x && rule.re.exec(String(x.id || '')); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+  const fresh = [];
   b.forEach((x) => {
-    const k = idOf(x); if (!k || seen.has(k)) return; seen.add(k);
-    const prev = byId.get(k);
-    if (prev && Array.isArray(prev.thread) && Array.isArray(x.thread)) {
-      const t = new Map(); prev.thread.concat(x.thread).forEach((m) => t.set(m && m.id != null ? String(m.id) : JSON.stringify(m), m));
-      x = { ...prev, ...x, thread: [...t.values()] };
-    } else if (prev) x = { ...prev, ...x };
-    out.push(x);
+    if (!x || typeof x !== 'object') return;
+    const k = idOf(x); if (!k) return;
+    const i = pos.get(k);
+    if (i == null) { fresh.push(x); pos.set(k, -1); return; }
+    if (i < 0) return;
+    const prev = out[i];
+    if (rule && rule.who(prev) !== rule.who(x)) {
+      if (key === 'pps_clients' && out.some((c) => rule.who(c) === rule.who(x))) return;
+      const nx = { ...x, id: rule.make(++max) }; fresh.push(nx); pos.set(nx.id, -1); return;
+    }
+    if (key === 'pps_inquiries' && Array.isArray(x.thread)) out[i] = { ...prev, thread: mergeThreads(prev.thread, x.thread) };
   });
-  a.forEach((x) => { const k = idOf(x); if (!k || !seen.has(k)) out.push(x); });
-  return JSON.stringify(out);
+  return JSON.stringify(fresh.concat(out));
 }
 
 let tableReady = false;
@@ -92,7 +124,7 @@ export default {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
-    if (url.pathname === '/api/health') return json({ ok: true, db: !!env.DB, locked: !!env.ADMIN_TOKEN });
+    if (url.pathname === '/api/health') return json({ ok: true, db: !!env.DB, locked: !!env.ADMIN_TOKEN, admin: isAdmin(request, env) });
     if (!env.DB) return json({ error: 'D1 database not bound. Add [[d1_databases]] to wrangler.toml.' }, 503);
     if (request.method !== 'GET' && request.method !== 'HEAD' && !sameOrigin(request, url)) return json({ error: 'Forbidden' }, 403);
     const admin = isAdmin(request, env);
@@ -173,10 +205,16 @@ export default {
         if (typeof body.json !== 'string') return json({ error: 'json must be a string' }, 400);
         if (body.json.length > MAX_BYTES) return json({ error: 'Too large' }, 413);
         let value = body.json, merged = false;
-        if (CUSTOMER_KEYS.has(key) && !admin) {
-          const row = await env.DB.prepare('SELECT json FROM sync WHERE key = ?').bind(key).first();
-          if (row) { const mj = mergeList(row.json, body.json); if (mj == null) return json({ error: 'Bad list' }, 400); merged = mj !== body.json; value = mj; }
+        if (CUSTOMER_KEYS.has(key)) {
+          const row = await env.DB.prepare('SELECT json, updated_at FROM sync WHERE key = ?').bind(key).first();
+          const stale = admin && row && body.base != null && Number(body.base) !== row.updated_at;
+          if (row && (!admin || stale)) {
+            const mj = mergeList(key, row.json, body.json, admin ? 'admin' : 'customer');
+            if (mj == null) return json({ error: 'Bad list' }, 400);
+            merged = mj !== body.json; value = mj;
+          }
         }
+        if (value.length > 1900000) return json({ error: 'Too large for database' }, 413);
         const now = Date.now();
         await env.DB.prepare('INSERT INTO sync (key, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at')
           .bind(key, value, now).run();
