@@ -6,48 +6,126 @@
 //   GET  /api/sync            -> [{key, updatedAt}]           (index, for polling)
 //   GET  /api/sync/:key       -> {key, json, updatedAt} | 404
 //   PUT  /api/sync/:key       -> body {json}                   (upsert)
+//   POST /api/visit           -> records a storefront visit (public)
+//   GET  /api/visits?since=ms -> {count, last:[...]}            (admin)
 //   GET  /api/health          -> {ok:true}
 //
-// Optional protection: set a secret named ADMIN_TOKEN in the Worker's
-// Variables & Secrets. Then writes to admin-only keys (catalogue, hero media,
-// rates, staff accounts) must carry header  X-Admin-Token: <that value>.
-// The admin console asks for it once (Settings → Cloud sync) and stores it in
-// this browser. Without the secret, all keys are writable (fine to start with).
+// SECURITY: set a secret named ADMIN_TOKEN in the Worker's Variables &
+// Secrets (Settings → Variables & Secrets → Add → Secret). Once it is set:
+//   · business records (staff accounts, quotations, deliveries, LPOs,
+//     receipts, notifications, quotes) can only be READ or written with
+//     header X-Admin-Token — the public website never sees them;
+//   · catalogue / hero / rates / coming-soon can only be written by the admin;
+//   · visitors can add or update their own orders, inquiries and sign-ups but
+//     can never delete or wipe other records (server-side merge).
+// The admin console asks for the token once (Settings → Cloud sync).
 
-const ALL_KEYS = new Set([
-  'pps_hero_media', 'pps_products', 'pps_currency_rates', 'pps_coming_soon',
-  'pps_orders', 'pps_inquiries', 'pps_clients', 'pps_quotes',
-  'pps_quotations', 'pps_seq_quotations', 'pps_seq_quote_files',
+const PUBLIC_KEYS = new Set(['pps_hero_media', 'pps_products', 'pps_currency_rates', 'pps_coming_soon']);
+const CUSTOMER_KEYS = new Set(['pps_orders', 'pps_inquiries', 'pps_clients']);
+const PRIVATE_KEYS = new Set([
+  'pps_quotes', 'pps_quotations', 'pps_seq_quotations', 'pps_seq_quote_files',
   'pps_deliveries', 'pps_lpos', 'pps_notifications', 'pps_users',
   'pps_receipts', 'pps_deliveries_seq', 'pps_lpos_seq'
 ]);
-const ADMIN_ONLY = new Set(['pps_hero_media', 'pps_coming_soon', 'pps_products', 'pps_currency_rates', 'pps_users', 'pps_seq_quotations', 'pps_seq_quote_files']);
-const MAX_BYTES = 4 * 1024 * 1024; // D1 row limit is ~1MB per value; hero media is stored as URLs so this is generous
+const ALL_KEYS = new Set([...PUBLIC_KEYS, ...CUSTOMER_KEYS, ...PRIVATE_KEYS]);
+const MAX_BYTES = 4 * 1024 * 1024;
+const IMG_MAX = 1500000;
 
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+const SEC_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'x-frame-options': 'SAMEORIGIN',
+};
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...SEC_HEADERS };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+
+function safeEqual(a, b) {
+  a = String(a || ''); b = String(b || '');
+  if (!a || !b || a.length !== b.length) return false;
+  let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+// Admin = token matches. With no ADMIN_TOKEN configured everyone is treated as
+// admin (open mode, as before) so nothing breaks until the secret is added.
+const isAdmin = (req, env) => !env.ADMIN_TOKEN || safeEqual(req.headers.get('x-admin-token'), env.ADMIN_TOKEN);
+
+// Writes must come from this site (blocks other websites posting into the DB).
+function sameOrigin(req, url) {
+  const o = req.headers.get('origin');
+  if (!o) return true;
+  try { return new URL(o).host === url.host; } catch (e) { return false; }
+}
+
+// Non-admin write to a customer list: add new records / update existing ones
+// by id, never drop records the visitor's browser doesn't have.
+function mergeList(oldJson, newJson) {
+  let a, b;
+  try { a = JSON.parse(oldJson); b = JSON.parse(newJson); } catch (e) { return null; }
+  if (!Array.isArray(a) || !Array.isArray(b)) return null;
+  const idOf = (x) => x && (x.id != null ? String(x.id) : (x.email ? 'e:' + String(x.email).toLowerCase() : null));
+  const byId = new Map(); a.forEach((x) => { const k = idOf(x); if (k) byId.set(k, x); });
+  const out = [], seen = new Set();
+  b.forEach((x) => {
+    const k = idOf(x); if (!k || seen.has(k)) return; seen.add(k);
+    const prev = byId.get(k);
+    if (prev && Array.isArray(prev.thread) && Array.isArray(x.thread)) {
+      const t = new Map(); prev.thread.concat(x.thread).forEach((m) => t.set(m && m.id != null ? String(m.id) : JSON.stringify(m), m));
+      x = { ...prev, ...x, thread: [...t.values()] };
+    } else if (prev) x = { ...prev, ...x };
+    out.push(x);
+  });
+  a.forEach((x) => { const k = idOf(x); if (!k || !seen.has(k)) out.push(x); });
+  return JSON.stringify(out);
+}
 
 let tableReady = false;
 async function ensureTable(db) {
   if (tableReady) return;
   await db.prepare('CREATE TABLE IF NOT EXISTS sync (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
   await db.prepare('CREATE TABLE IF NOT EXISTS imgs (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
+  await db.prepare('CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, path TEXT, ref TEXT, country TEXT, city TEXT, device TEXT, ip TEXT)').run();
   tableReady = true;
 }
-const IMG_MAX = 1500000; // one image per D1 row, well under the row limit
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
-    if (url.pathname === '/api/health') return json({ ok: true, db: !!env.DB });
+    if (url.pathname === '/api/health') return json({ ok: true, db: !!env.DB, locked: !!env.ADMIN_TOKEN });
     if (!env.DB) return json({ error: 'D1 database not bound. Add [[d1_databases]] to wrangler.toml.' }, 503);
+    if (request.method !== 'GET' && request.method !== 'HEAD' && !sameOrigin(request, url)) return json({ error: 'Forbidden' }, 403);
+    const admin = isAdmin(request, env);
 
     try {
       await ensureTable(env.DB);
-      // Images (e.g. Coming soon photos) are stored one per row and served as
-      // real files, so the synced JSON only carries short /api/img/<id> URLs.
+
+      // ── Live visitor feed ───────────────────────────────────────────────
+      if (url.pathname === '/api/visit' && request.method === 'POST') {
+        let b = {}; try { b = await request.json(); } catch (e) {}
+        const cf = request.cf || {};
+        const ip = request.headers.get('cf-connecting-ip') || '';
+        const now = Date.now();
+        // One visit per IP per 30 s (stops refresh spam filling the table).
+        const dup = await env.DB.prepare('SELECT id FROM visits WHERE ip = ? AND at > ?').bind(ip, now - 30000).first();
+        if (!dup) {
+          const ua = request.headers.get('user-agent') || '';
+          const device = /mobile|android|iphone/i.test(ua) ? 'Mobile' : /ipad|tablet/i.test(ua) ? 'Tablet' : 'Desktop';
+          await env.DB.prepare('INSERT INTO visits (at, path, ref, country, city, device, ip) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .bind(now, String(b.path || '/').slice(0, 200), String(b.ref || '').slice(0, 300), cf.country || '', cf.city || '', device, ip).run();
+          await env.DB.prepare('DELETE FROM visits WHERE at < ?').bind(now - 30 * 864e5).run();
+        }
+        return json({ ok: true });
+      }
+      if (url.pathname === '/api/visits' && request.method === 'GET') {
+        if (!admin) return json({ error: 'Admin token required' }, 401);
+        const since = parseInt(url.searchParams.get('since') || '0', 10) || 0;
+        const { results } = await env.DB.prepare('SELECT id, at, path, ref, country, city, device FROM visits WHERE at > ? ORDER BY at DESC LIMIT 50').bind(since).all();
+        const today = await env.DB.prepare('SELECT COUNT(*) AS n FROM visits WHERE at > ?').bind(Date.now() - 864e5).first();
+        return json({ now: Date.now(), last: results, today: today ? today.n : 0 });
+      }
+
+      // ── Images ──────────────────────────────────────────────────────────
       const im = url.pathname.match(/^\/api\/img\/([a-z0-9_]+)$/);
       if (im) {
         if (request.method === 'GET') {
@@ -55,12 +133,12 @@ export default {
           if (!row) return new Response('Not found', { status: 404 });
           const bin = atob(row.data), bytes = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          return new Response(bytes, { headers: { 'content-type': row.mime, 'cache-control': 'public, max-age=31536000, immutable' } });
+          return new Response(bytes, { headers: { 'content-type': row.mime, 'cache-control': 'public, max-age=31536000, immutable', ...SEC_HEADERS } });
         }
         if (request.method === 'PUT' || request.method === 'POST') {
-          if (env.ADMIN_TOKEN && request.headers.get('x-admin-token') !== env.ADMIN_TOKEN) return json({ error: 'Admin token required' }, 401);
+          if (!admin) return json({ error: 'Admin token required' }, 401);
           let body; try { body = await request.json(); } catch (e) { return json({ error: 'Bad JSON' }, 400); }
-          const mm = typeof body.data === 'string' && body.data.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
+          const mm = typeof body.data === 'string' && body.data.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
           if (!mm) return json({ error: 'data must be a base64 image data URL' }, 400);
           if (mm[2].length > IMG_MAX) return json({ error: 'Image too large' }, 413);
           await env.DB.prepare('INSERT INTO imgs (id, mime, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = excluded.updated_at')
@@ -69,15 +147,18 @@ export default {
         }
         return json({ error: 'Method not allowed' }, 405);
       }
+
+      // ── Sync ────────────────────────────────────────────────────────────
       const m = url.pathname.match(/^\/api\/sync(?:\/([a-z0-9_]+))?$/);
       if (!m) return json({ error: 'Not found' }, 404);
       const key = m[1];
 
       if (request.method === 'GET' && !key) {
         const { results } = await env.DB.prepare('SELECT key, updated_at FROM sync').all();
-        return json(results.map(r => ({ key: r.key, updatedAt: r.updated_at })));
+        return json(results.filter(r => admin || !PRIVATE_KEYS.has(r.key)).map(r => ({ key: r.key, updatedAt: r.updated_at })));
       }
       if (!key || !ALL_KEYS.has(key)) return json({ error: 'Unknown key' }, 404);
+      if (PRIVATE_KEYS.has(key) && !admin) return json({ error: 'Admin token required' }, 401);
 
       if (request.method === 'GET') {
         const row = await env.DB.prepare('SELECT key, json, updated_at FROM sync WHERE key = ?').bind(key).first();
@@ -86,21 +167,24 @@ export default {
       }
 
       if (request.method === 'PUT' || request.method === 'POST') {
-        if (env.ADMIN_TOKEN && ADMIN_ONLY.has(key) && request.headers.get('x-admin-token') !== env.ADMIN_TOKEN) {
-          return json({ error: 'Admin token required' }, 401);
-        }
+        if (PUBLIC_KEYS.has(key) && !admin) return json({ error: 'Admin token required' }, 401);
         let body;
         try { body = await request.json(); } catch (e) { return json({ error: 'Bad JSON' }, 400); }
         if (typeof body.json !== 'string') return json({ error: 'json must be a string' }, 400);
         if (body.json.length > MAX_BYTES) return json({ error: 'Too large' }, 413);
+        let value = body.json, merged = false;
+        if (CUSTOMER_KEYS.has(key) && !admin) {
+          const row = await env.DB.prepare('SELECT json FROM sync WHERE key = ?').bind(key).first();
+          if (row) { const mj = mergeList(row.json, body.json); if (mj == null) return json({ error: 'Bad list' }, 400); merged = mj !== body.json; value = mj; }
+        }
         const now = Date.now();
         await env.DB.prepare('INSERT INTO sync (key, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at')
-          .bind(key, body.json, now).run();
-        return json({ key, updatedAt: now });
+          .bind(key, value, now).run();
+        return json({ key, updatedAt: now, merged });
       }
       return json({ error: 'Method not allowed' }, 405);
     } catch (e) {
-      return json({ error: String(e && e.message || e) }, 500);
+      return json({ error: 'Server error' }, 500);
     }
   }
 };

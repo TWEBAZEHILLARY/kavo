@@ -2,14 +2,20 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: SAMEORIGIN
   Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  X-XSS-Protection: 0
+  Cross-Origin-Resource-Policy: same-site
 
 /admin
   X-Robots-Tag: noindex, nofollow
   Cache-Control: no-store
+  X-Frame-Options: DENY
 
 /admin.html
   X-Robots-Tag: noindex, nofollow
   Cache-Control: no-store
+  X-Frame-Options: DENY
 
 /lib/*
   Cache-Control: no-cache
