@@ -6,6 +6,7 @@
 //   GET  /api/sync            -> [{key, updatedAt}]           (index, for polling)
 //   GET  /api/sync/:key       -> {key, json, updatedAt} | 404
 //   PUT  /api/sync/:key       -> body {json}                   (upsert)
+//   POST /api/rec/:key        -> body {upserts:[], deletes:[]} (orders/clients/inquiries, per record)
 //   POST /api/visit           -> records a storefront visit (public)
 //   GET  /api/visits?since=ms -> {count, last:[...]}            (admin)
 //   GET  /api/health          -> {ok:true}
@@ -110,6 +111,32 @@ function mergeList(key, oldJson, newJson, mode) {
   return JSON.stringify(fresh.concat(out));
 }
 
+function applyOps(key, list, ups, dels, admin) {
+  const rule = ID_RULES[key], out = list.slice(), pos = new Map(), renamed = {};
+  out.forEach((x, i) => { const k = idOf(x); if (k) pos.set(k, i); });
+  let max = 0;
+  if (rule) out.concat(ups).forEach((x) => { const m = x && rule.re.exec(String(x.id || '')); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+  const dupClient = (x) => key === 'pps_clients' && rule.who(x) && out.concat(fresh).some((c) => c !== x && rule.who(c) === rule.who(x));
+  const fresh = [];
+  ups.forEach((x) => {
+    if (!x || typeof x !== 'object') return;
+    const k = idOf(x); if (!k) return;
+    const i = pos.get(k);
+    if (i == null) { if (!admin && dupClient(x)) return; fresh.push(x); pos.set(k, -1); return; }
+    if (i < 0) return;
+    const prev = out[i];
+    if (admin) { out[i] = key === 'pps_inquiries' ? { ...x, thread: mergeThreads(prev.thread, x.thread) } : x; return; }
+    if (rule && rule.who(prev) !== rule.who(x)) {
+      if (dupClient(x)) return;
+      const nid = rule.make(++max); renamed[x.id] = nid; fresh.push({ ...x, id: nid }); pos.set(nid, -1); return;
+    }
+    if (key === 'pps_inquiries' && Array.isArray(x.thread)) out[i] = { ...prev, thread: mergeThreads(prev.thread, x.thread) };
+  });
+  let result = fresh.concat(out);
+  if (dels.length) { const d = new Set(dels); result = result.filter((x) => !d.has(idOf(x))); }
+  return { list: result, renamed };
+}
+
 let tableReady = false;
 async function ensureTable(db) {
   if (tableReady) return;
@@ -155,6 +182,33 @@ export default {
         const { results } = await env.DB.prepare('SELECT id, at, path, ref, country, city, device FROM visits WHERE at > ? ORDER BY at DESC LIMIT 50').bind(since).all();
         const today = await env.DB.prepare('SELECT COUNT(*) AS n FROM visits WHERE at > ?').bind(Date.now() - 864e5).first();
         return json({ now: Date.now(), last: results, today: today ? today.n : 0 });
+      }
+
+      // ── Record-level saves for orders / clients / inquiries ──────────────
+      // Each device sends only the records it added or changed (and, for the
+      // admin, the ones it deleted). The server applies them to the live list
+      // atomically, so no device can ever overwrite another device's records.
+      const rm = url.pathname.match(/^\/api\/rec\/([a-z_]+)$/);
+      if (rm) {
+        const key = rm[1];
+        if (!CUSTOMER_KEYS.has(key)) return json({ error: 'Unknown key' }, 404);
+        if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+        let body; try { body = await request.json(); } catch (e) { return json({ error: 'Bad JSON' }, 400); }
+        const ups = Array.isArray(body.upserts) ? body.upserts : [];
+        const dels = admin && Array.isArray(body.deletes) ? body.deletes.map(String) : [];
+        for (let attempt = 0; attempt < 8; attempt++) {
+          const row = await env.DB.prepare('SELECT json, updated_at FROM sync WHERE key = ?').bind(key).first();
+          let list = []; if (row) { try { list = JSON.parse(row.json); } catch (e) {} if (!Array.isArray(list)) list = []; }
+          const res = applyOps(key, list, ups, dels, admin);
+          const value = JSON.stringify(res.list);
+          if (value.length > 1900000) return json({ error: 'Too large for database' }, 413);
+          const now = Math.max(Date.now(), row ? row.updated_at + 1 : 0);
+          const r = row
+            ? await env.DB.prepare('UPDATE sync SET json = ?, updated_at = ? WHERE key = ? AND updated_at = ?').bind(value, now, key, row.updated_at).run()
+            : await env.DB.prepare('INSERT OR IGNORE INTO sync (key, json, updated_at) VALUES (?, ?, ?)').bind(key, value, now).run();
+          if (r && r.meta && r.meta.changes === 1) return json({ key, updatedAt: now, renamed: res.renamed });
+        }
+        return json({ error: 'Busy, retry' }, 503);
       }
 
       // ── Images ──────────────────────────────────────────────────────────
