@@ -151,7 +151,20 @@ export default {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
-    if (url.pathname === '/api/health') return json({ ok: true, db: !!env.DB, locked: !!env.ADMIN_TOKEN, admin: isAdmin(request, env) });
+    if (url.pathname === '/api/health') {
+      const out = { ok: true, version: 'v20', db: !!env.DB, locked: !!env.ADMIN_TOKEN, admin: isAdmin(request, env), now: Date.now() };
+      if (env.DB) {
+        try {
+          await ensureTable(env.DB);
+          const { results } = await env.DB.prepare("SELECT key, json, updated_at FROM sync WHERE key IN ('pps_orders','pps_clients','pps_inquiries')").all();
+          out.records = {};
+          results.forEach((r) => { let n = 0, last = null; try { const l = JSON.parse(r.json); n = Array.isArray(l) ? l.length : 0; last = n ? (l[0].id || null) : null; } catch (e) {} out.records[r.key] = { count: n, newest: last, updatedAt: r.updated_at }; });
+          const v = await env.DB.prepare('SELECT COUNT(*) AS n FROM visits WHERE at > ?').bind(Date.now() - 864e5).first();
+          out.visitsToday = v ? v.n : 0;
+        } catch (e) { out.dbError = String(e && e.message || e); }
+      }
+      return json(out);
+    }
     if (!env.DB) return json({ error: 'D1 database not bound. Add [[d1_databases]] to wrangler.toml.' }, 503);
     if (request.method !== 'GET' && request.method !== 'HEAD' && !sameOrigin(request, url)) return json({ error: 'Forbidden' }, 403);
     const admin = isAdmin(request, env);

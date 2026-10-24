@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Live status · KAVO Grid</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#EEF2F8;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#0B1A33}
+a{color:#1457E6}a:hover{color:#0E3FB0}
+.wrap{max-width:640px;margin:0 auto;padding:40px 20px}
+h1{font-size:26px;font-weight:800;margin:0 0 6px}.sub{color:#5A6B85;font-size:14px;margin:0 0 24px}
+.card{background:#fff;border:1px solid #E4E9F2;border-radius:14px;overflow:hidden}
+.row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 18px;font-size:14px}
+.row+.row{border-top:1px solid #EDF1F7}.row span{color:#5A6B85;font-weight:600}
+.ok{color:#119C5B;font-weight:800}.bad{color:#E5484D;font-weight:800}
+.fix{margin-top:16px;padding:14px 18px;background:#FDECEC;color:#0B1A33;border-radius:12px;font-size:14px;line-height:1.6;display:none}
+button{margin-top:18px;font:inherit;font-weight:700;background:#1457E6;color:#fff;border:0;border-radius:10px;padding:12px 18px;cursor:pointer}button:hover{background:#0E3FB0}
+.t{color:#8A98B0;font-size:12px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Live status</h1>
+<p class="sub">What the kavogrid.org database holds right now. Refreshes every 5 seconds.</p>
+<div class="card" id="rows"><div class="row"><span>Checking…</span></div></div>
+<div class="fix" id="fix"></div>
+<button type="button" onclick="load()">Check now</button>
+<div class="t" id="t"></div>
+</div>
+<script>
+function h(){var x={};try{var t=localStorage.getItem('pps_sync_token');if(t)x['x-admin-token']=t;}catch(e){}return x;}
+function row(k,v,c){return '<div class="row"><span>'+k+'</span><strong class="'+(c||'')+'">'+v+'</strong></div>';}
+function ago(ms){if(!ms)return '';var s=Math.round((Date.now()-ms)/1000);return s<60?s+'s ago':s<3600?Math.round(s/60)+' min ago':s<86400?Math.round(s/3600)+' h ago':Math.round(s/86400)+' days ago';}
+function load(){
+var R=document.getElementById('rows'),F=document.getElementById('fix'),fix=[];
+fetch('/api/health',{cache:'no-store',headers:h()}).then(function(r){return r.json();}).then(function(d){
+var o='';
+o+=row('Website update',d.version==='v20'?'v20 live':'Old version',d.version==='v20'?'ok':'bad');
+if(d.version!=='v20')fix.push('Cloudflare is still running an older worker.js. In Cloudflare → Workers &amp; Pages → kavo → Deployments, check the latest build says Success. If it failed, open it and send me the error.');
+o+=row('Database connected',d.db?'Yes':'No',d.db?'ok':'bad');
+if(!d.db)fix.push('The D1 database is not connected. Check wrangler.toml has the [[d1_databases]] block with binding = "DB".');
+if(d.dbError)fix.push('Database error: '+d.dbError);
+o+=row('Admin password on this device',!d.locked?'Not required':d.admin?'Correct':'Missing or wrong',!d.locked||d.admin?'ok':'bad');
+if(d.locked&&!d.admin)fix.push('Open kavogrid.org/admin → Settings → Cloud sync and enter your ADMIN_TOKEN on this device.');
+var rec=d.records||{};
+[['pps_clients','Clients'],['pps_orders','Orders'],['pps_inquiries','Inquiries']].forEach(function(p){var x=rec[p[0]];o+=row(p[1]+' in database',x?x.count+(x.newest?' · newest '+x.newest:'')+(x.updatedAt?' · '+ago(x.updatedAt):''):'0');});
+if(d.visitsToday!=null)o+=row('Visits in the last 24 h',d.visitsToday);
+R.innerHTML=o;
+F.style.display=fix.length?'block':'none';F.innerHTML=fix.join('<br><br>');
+document.getElementById('t').textContent='Checked '+new Date().toLocaleTimeString();
+}).catch(function(){R.innerHTML=row('Server','Not reachable','bad');F.style.display='block';F.innerHTML='The /api/health address did not answer. worker.js is not running. Check the latest Cloudflare deployment.';});
+}
+load();setInterval(load,5000);
+</script>
+</body>
+</html>
