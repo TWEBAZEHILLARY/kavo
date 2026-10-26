@@ -7,6 +7,7 @@
 //   GET  /api/sync/:key       -> {key, json, updatedAt} | 404
 //   PUT  /api/sync/:key       -> body {json}                   (upsert)
 //   POST /api/rec/:key        -> body {upserts:[], deletes:[]} (orders/clients/inquiries, per record)
+//   POST /api/auth/signup|login|social -> client accounts (hashed passwords)
 //   POST /api/visit           -> records a storefront visit (public)
 //   GET  /api/visits?since=ms -> {count, last:[...]}            (admin)
 //   GET  /api/health          -> {ok:true}
@@ -143,7 +144,160 @@ async function ensureTable(db) {
   await db.prepare('CREATE TABLE IF NOT EXISTS sync (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
   await db.prepare('CREATE TABLE IF NOT EXISTS imgs (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL)').run();
   await db.prepare('CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, path TEXT, ref TEXT, country TEXT, city TEXT, device TEXT, ip TEXT)').run();
+  await db.prepare('CREATE TABLE IF NOT EXISTS accounts (email TEXT PRIMARY KEY, client_id TEXT, hash TEXT, salt TEXT, provider TEXT, created_at INTEGER NOT NULL, last_login INTEGER, fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0)').run();
   tableReady = true;
+}
+
+// ── Client accounts ───────────────────────────────────────────────────────
+// Passwords are never stored in pps_clients (which the website downloads).
+// They live only in the accounts table as salted PBKDF2-SHA256 hashes.
+// Older plaintext passwords are migrated automatically the first time the
+// server sees them. 5 wrong passwords lock the account for 15 minutes.
+const enc = new TextEncoder();
+const toB64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); };
+const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function hashPw(pw, saltB64) {
+  const salt = saltB64 ? fromB64(saltB64) : crypto.getRandomValues(new Uint8Array(16));
+  const k = await crypto.subtle.importKey('raw', enc.encode(String(pw)), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100000 }, k, 256);
+  return { hash: toB64(bits), salt: toB64(salt) };
+}
+const normEmail = (e) => String(e || '').trim().toLowerCase();
+const publicClient = (c) => { if (!c) return c; const o = { ...c }; delete o.password; return o; };
+async function casList(db, key, fn) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const row = await db.prepare('SELECT json, updated_at FROM sync WHERE key = ?').bind(key).first();
+    let list = []; if (row) { try { list = JSON.parse(row.json); } catch (e) {} if (!Array.isArray(list)) list = []; }
+    const res = fn(list);
+    if (!res || !res.list) return res ? res.out : undefined;
+    const value = JSON.stringify(res.list);
+    const now = Math.max(Date.now(), row ? row.updated_at + 1 : 0);
+    const r = row
+      ? await db.prepare('UPDATE sync SET json = ?, updated_at = ? WHERE key = ? AND updated_at = ?').bind(value, now, key, row.updated_at).run()
+      : await db.prepare('INSERT OR IGNORE INTO sync (key, json, updated_at) VALUES (?, ?, ?)').bind(key, value, now).run();
+    if (r && r.meta && r.meta.changes === 1) return res.out;
+  }
+  throw new Error('busy');
+}
+async function ensureAccount(db, email, password, clientId, provider) {
+  email = normEmail(email); if (!email) return;
+  const h = password ? await hashPw(password) : { hash: null, salt: null };
+  await db.prepare('INSERT OR IGNORE INTO accounts (email, client_id, hash, salt, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(email, clientId || null, h.hash, h.salt, provider || null, Date.now()).run();
+}
+async function readClients(db) {
+  const row = await db.prepare("SELECT json FROM sync WHERE key = 'pps_clients'").first();
+  let l = []; if (row) { try { l = JSON.parse(row.json); } catch (e) {} } return Array.isArray(l) ? l : [];
+}
+// Move any plaintext passwords out of pps_clients into hashed accounts.
+async function migratePasswords(db) {
+  const list = await readClients(db);
+  const withPw = list.filter((c) => c && typeof c.password === 'string' && c.password && c.email);
+  for (const c of withPw) await ensureAccount(db, c.email, c.password, c.id, null);
+  if (!list.some((c) => c && c.password != null)) return;
+  await casList(db, 'pps_clients', (l) => (l.some((c) => c && c.password != null) ? { list: l.map(publicClient) } : null));
+}
+function nextClientId(list) {
+  let max = 0; list.forEach((c) => { const m = /^client_(\d+)$/.exec(String(c && c.id || '')); if (m) max = Math.max(max, parseInt(m[1], 10)); });
+  return 'client_' + String(max + 1).padStart(3, '0');
+}
+function newClient(list, b, provider) {
+  const firstName = String(b.firstName || '').trim().slice(0, 60), lastName = String(b.lastName || '').trim().slice(0, 60), now = new Date();
+  const email = String(b.email || '').trim().slice(0, 120);
+  return {
+    id: nextClientId(list), firstName, lastName,
+    name: [firstName, lastName].filter(Boolean).join(' ') || email.split('@')[0] || 'Customer',
+    email, phone: String(b.phone || '').trim().slice(0, 40), address: String(b.address || '').trim().slice(0, 200),
+    registered: now.toISOString().slice(0, 10), registrationDate: now.toISOString(),
+    socialProvider: provider || null, status: 'Active', source: provider || 'Website',
+    lastLogin: now.toISOString(), loginCount: 1,
+  };
+}
+async function touchLogin(db, email) {
+  const e = normEmail(email);
+  return casList(db, 'pps_clients', (l) => {
+    const i = l.findIndex((c) => c && normEmail(c.email) === e); if (i < 0) return { out: null };
+    const c = { ...l[i], lastLogin: new Date().toISOString(), loginCount: (Number(l[i].loginCount) || 0) + 1 };
+    delete c.password; const nl = l.slice(); nl[i] = c; return { list: nl, out: c };
+  });
+}
+async function handleAuth(path, request, env) {
+  const db = env.DB;
+  let b = {}; try { b = await request.json(); } catch (e) { return json({ code: 'bad_request' }, 400); }
+  await migratePasswords(db);
+  const now = Date.now();
+
+  if (path === 'signup') {
+    const email = normEmail(b.email), pw = String(b.password || '');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ code: 'bad_email' }, 400);
+    if (pw.length < 4 || pw.length > 128) return json({ code: 'weak_password' }, 400);
+    const list = await readClients(db);
+    const acct = await db.prepare('SELECT email FROM accounts WHERE email = ?').bind(email).first();
+    const hasClient = list.some((c) => c && normEmail(c.email) === email);
+    if (hasClient) return json({ code: 'exists' }, 409);
+    if (acct) await db.prepare('DELETE FROM accounts WHERE email = ?').bind(email).run(); // client was removed by admin
+    const h = await hashPw(pw);
+    const ins = await db.prepare('INSERT OR IGNORE INTO accounts (email, hash, salt, created_at, last_login) VALUES (?, ?, ?, ?, ?)').bind(email, h.hash, h.salt, now, now).run();
+    if (!ins.meta || ins.meta.changes !== 1) return json({ code: 'exists' }, 409);
+    const client = await casList(db, 'pps_clients', (l) => {
+      if (l.some((c) => c && normEmail(c.email) === email)) return { out: null };
+      const c = newClient(l, b, null); return { list: [c].concat(l), out: c };
+    });
+    if (!client) return json({ code: 'exists' }, 409);
+    await db.prepare('UPDATE accounts SET client_id = ? WHERE email = ?').bind(client.id, email).run();
+    return json({ client: publicClient(client) });
+  }
+
+  if (path === 'login') {
+    const id = String(b.id || '').trim(), pw = String(b.password || '');
+    if (!id || !pw) return json({ code: 'bad_request' }, 400);
+    const list = await readClients(db);
+    let email = id.includes('@') ? normEmail(id) : null;
+    if (!email) {
+      const lid = id.toLowerCase();
+      const hits = list.filter((c) => c && ((c.name && String(c.name).trim().toLowerCase() === lid) || (c.username && String(c.username).toLowerCase() === lid)));
+      if (hits.length === 1) email = normEmail(hits[0].email);
+      else if (hits.length > 1) return json({ code: 'use_email' }, 409);
+    }
+    const client = email && list.find((c) => c && normEmail(c.email) === email);
+    if (!client) return json({ code: 'no_account' }, 404);
+    const acct = await db.prepare('SELECT * FROM accounts WHERE email = ?').bind(email).first();
+    if (!acct || !acct.hash) return json({ code: client.socialProvider ? 'social' : 'no_password', provider: client.socialProvider || null }, 409);
+    if (acct.locked_until > now) return json({ code: 'locked', retryIn: Math.ceil((acct.locked_until - now) / 60000) }, 429);
+    const h = await hashPw(pw, acct.salt);
+    if (h.hash !== acct.hash) {
+      const fails = (acct.fails || 0) + 1;
+      if (fails >= 5) { await db.prepare('UPDATE accounts SET fails = 0, locked_until = ? WHERE email = ?').bind(now + 15 * 60000, email).run(); return json({ code: 'locked', retryIn: 15 }, 429); }
+      await db.prepare('UPDATE accounts SET fails = ? WHERE email = ?').bind(fails, email).run();
+      return json({ code: 'wrong_password', left: 5 - fails }, 401);
+    }
+    await db.prepare('UPDATE accounts SET fails = 0, locked_until = 0, last_login = ? WHERE email = ?').bind(now, email).run();
+    const c = await touchLogin(db, email);
+    return json({ client: publicClient(c || client) });
+  }
+
+  if (path === 'social') {
+    const email = normEmail(b.email);
+    if (!email) return json({ code: 'bad_email' }, 400);
+    const list = await readClients(db);
+    const existing = list.find((c) => c && normEmail(c.email) === email);
+    if (existing) { const c = await touchLogin(db, email); return json({ client: publicClient(c || existing) }); }
+    if (b.mode === 'login') return json({ code: 'no_account' }, 404);
+    const provider = String(b.provider || 'Social').slice(0, 30);
+    const client = await casList(db, 'pps_clients', (l) => {
+      const ex = l.find((c) => c && normEmail(c.email) === email); if (ex) return { out: ex };
+      const c = newClient(l, b, provider); return { list: [c].concat(l), out: c };
+    });
+    await ensureAccount(db, email, null, client.id, provider);
+    return json({ client: publicClient(client) });
+  }
+
+  if (path === 'exists') {
+    const email = normEmail(b.email);
+    const list = await readClients(db);
+    return json({ exists: list.some((c) => c && normEmail(c.email) === email) });
+  }
+  return json({ code: 'not_found' }, 404);
 }
 
 export default {
@@ -152,7 +306,7 @@ export default {
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
     if (url.pathname === '/api/health') {
-      const out = { ok: true, version: 'v20', db: !!env.DB, locked: !!env.ADMIN_TOKEN, admin: isAdmin(request, env), now: Date.now() };
+      const out = { ok: true, version: 'v21', db: !!env.DB, locked: !!env.ADMIN_TOKEN, admin: isAdmin(request, env), now: Date.now() };
       if (env.DB) {
         try {
           await ensureTable(env.DB);
@@ -201,6 +355,12 @@ export default {
       // Each device sends only the records it added or changed (and, for the
       // admin, the ones it deleted). The server applies them to the live list
       // atomically, so no device can ever overwrite another device's records.
+      const am = url.pathname.match(/^\/api\/auth\/(signup|login|social|exists)$/);
+      if (am) {
+        if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+        return await handleAuth(am[1], request, env);
+      }
+
       const rm = url.pathname.match(/^\/api\/rec\/([a-z_]+)$/);
       if (rm) {
         const key = rm[1];
@@ -209,6 +369,19 @@ export default {
         let body; try { body = await request.json(); } catch (e) { return json({ error: 'Bad JSON' }, 400); }
         const ups = Array.isArray(body.upserts) ? body.upserts : [];
         const dels = admin && Array.isArray(body.deletes) ? body.deletes.map(String) : [];
+        if (key === 'pps_clients') {
+          for (let i = 0; i < ups.length; i++) {
+            const c = ups[i];
+            if (c && typeof c === 'object' && c.password != null) {
+              if (typeof c.password === 'string' && c.password && c.email) await ensureAccount(env.DB, c.email, c.password, c.id, null);
+              ups[i] = publicClient(c);
+            }
+          }
+          if (admin && dels.length) {
+            const cur = await readClients(env.DB);
+            for (const c of cur) if (c && dels.includes(String(c.id)) && c.email) await env.DB.prepare('DELETE FROM accounts WHERE email = ?').bind(normEmail(c.email)).run();
+          }
+        }
         for (let attempt = 0; attempt < 8; attempt++) {
           const row = await env.DB.prepare('SELECT json, updated_at FROM sync WHERE key = ?').bind(key).first();
           let list = []; if (row) { try { list = JSON.parse(row.json); } catch (e) {} if (!Array.isArray(list)) list = []; }
@@ -260,6 +433,7 @@ export default {
       if (PRIVATE_KEYS.has(key) && !admin) return json({ error: 'Admin token required' }, 401);
 
       if (request.method === 'GET') {
+        if (key === 'pps_clients') await migratePasswords(env.DB);
         const row = await env.DB.prepare('SELECT key, json, updated_at FROM sync WHERE key = ?').bind(key).first();
         if (!row) return json({ error: 'Empty' }, 404);
         return json({ key: row.key, json: row.json, updatedAt: row.updated_at });
@@ -285,6 +459,7 @@ export default {
         const now = Date.now();
         await env.DB.prepare('INSERT INTO sync (key, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at')
           .bind(key, value, now).run();
+        if (key === 'pps_clients') { await migratePasswords(env.DB); merged = true; }
         return json({ key, updatedAt: now, merged });
       }
       return json({ error: 'Method not allowed' }, 405);

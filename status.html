@@ -37,8 +37,8 @@ function load(){
 var R=document.getElementById('rows'),F=document.getElementById('fix'),fix=[];
 fetch('/api/health',{cache:'no-store',headers:h()}).then(function(r){return r.json();}).then(function(d){
 var o='';
-o+=row('Website update',d.version==='v20'?'v20 live':'Old version',d.version==='v20'?'ok':'bad');
-if(d.version!=='v20')fix.push('Cloudflare is still running an older worker.js. In Cloudflare → Workers &amp; Pages → kavo → Deployments, check the latest build says Success. If it failed, open it and send me the error.');
+o+=row('Website update',d.version==='v21'?'v21 live':'Old version',d.version==='v21'?'ok':'bad');
+if(d.version!=='v21')fix.push('Cloudflare is still running an older worker.js. In Cloudflare → Workers &amp; Pages → kavo → Deployments, check the latest build says Success. If it failed, open it and send me the error.');
 o+=row('Database connected',d.db?'Yes':'No',d.db?'ok':'bad');
 if(!d.db)fix.push('The D1 database is not connected. Check wrangler.toml has the [[d1_databases]] block with binding = "DB".');
 if(d.dbError)fix.push('Database error: '+d.dbError);
