@@ -134,8 +134,26 @@
       write(list);
       return client;
     };
-    return { read, write, nextId, findByEmail, add };
+    // Save a client record returned by the server into the local list (no password).
+    const put = (c) => {
+      if (!c || !c.id) return c;
+      const list = read().filter((x) => x.id !== c.id && !(x.email && c.email && String(x.email).toLowerCase() === String(c.email).toLowerCase()));
+      const rec = { ...c }; delete rec.password;
+      list.unshift(rec); write(list); return rec;
+    };
+    return { read, write, nextId, findByEmail, add, put };
   })();
+
+  // ── Account server (worker.js /api/auth/*) ──
+  // Resolves { status, data } from the server, or null when the account server
+  // isn't available (local preview / older worker) so the local flow is used.
+  // Resolves { offline: true } on a network failure.
+  const authApi = (path, body) => {
+    if (location.protocol === 'file:') return Promise.resolve(null);
+    return fetch('/api/auth/' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      .then((r) => r.json().then((d) => (d && (d.client || d.code || d.exists != null) ? { status: r.status, data: d } : null), () => null))
+      .catch(() => ({ offline: true }));
+  };
 
   // ── Auth store (simulated session). Persisted to localStorage. ──
   const AuthStore = (() => {
@@ -819,6 +837,23 @@
       const name = (u.displayName || '').trim();
       const parts = name ? name.split(/\s+/) : [];
       const email = u.email || '';
+      if (!u.__local) {
+        authApi('social', { email, firstName: parts[0] || '', lastName: parts.slice(1).join(' '), provider: label, mode: tab }).then((res) => {
+          if (!res) { finishSocial({ ...u, __local: true }, label); return; }
+          if (res.offline) { ToastStore.push("Can't connect right now. Check your internet and try again.", { title: 'No connection', icon: 'user', tone: 'error' }); return; }
+          const d = res.data || {};
+          if (d.client) { ClientStore.put(d.client); finishSocial({ ...u, __local: true }, label); return; }
+          if (d.code === 'no_account') {
+            ToastStore.push('No account found. Please sign up first with this email or use a different method.', { title: 'No account', icon: 'user', tone: 'error' });
+            try { if (window.firebase && window.firebase.auth) window.firebase.auth().signOut(); } catch (e) {}
+            setTab('signup'); setTouched(false);
+            if (email) setSignup((s) => ({ ...s, email }));
+            return;
+          }
+          ToastStore.push('Sign-in failed. Please try again.', { title: 'Sign-in failed', icon: 'user', tone: 'error' });
+        });
+        return;
+      }
       const existing = ClientStore.findByEmail(email);
 
       // Login enforcement: on the Log In tab, reject any social user who has
@@ -859,10 +894,41 @@
       });
     };
 
-    const doLogin = () => {
+    const busyRef = React.useRef(false);
+    const signedIn = (client, msg, title) => {
+      const fn = client.firstName || (client.name || '').split(' ')[0];
+      const ln = client.lastName || (client.name || '').split(' ').slice(1).join(' ');
+      auth.login({ userId: client.id, firstName: fn, lastName: ln, email: client.email });
+      ModalStore.close();
+      ToastStore.push(msg.replace('{fn}', fn), { title, icon: 'check', tone: 'ok' });
+    };
+    const doLogin = (local) => {
       setTouched(true);
       if (!login.id.trim() || !login.pw.trim()) { ToastStore.push('Enter your username/email and password.', { title: 'Check the form', icon: 'user', tone: 'error' }); return; }
       const id = login.id.trim();
+      if (local !== true) {
+        if (busyRef.current) return; busyRef.current = true;
+        authApi('login', { id, password: login.pw }).then((res) => {
+          busyRef.current = false;
+          if (!res) { doLogin(true); return; }
+          if (res.offline) { ToastStore.push("Can't connect right now. Check your internet and try again.", { title: 'No connection', icon: 'user', tone: 'error' }); return; }
+          const d = res.data || {};
+          if (d.client) { signedIn(ClientStore.put(d.client), 'Welcome back, {fn}!', 'Signed in'); return; }
+          if (d.code === 'no_account') {
+            ToastStore.push('Account not found. Please sign up first.', { title: 'No account', icon: 'user', tone: 'error' });
+            setTab('signup'); setTouched(false);
+            if (id.includes('@')) setSignup((s) => ({ ...s, email: id }));
+            return;
+          }
+          if (d.code === 'wrong_password') { ToastStore.push('Incorrect password. ' + (d.left > 0 ? d.left + ' attempt' + (d.left === 1 ? '' : 's') + ' left before a 15-minute lock.' : 'Please try again.'), { title: 'Wrong password', icon: 'user', tone: 'error' }); return; }
+          if (d.code === 'locked') { ToastStore.push('Too many wrong passwords. Try again in ' + (d.retryIn || 15) + ' minute' + (d.retryIn === 1 ? '' : 's') + ', or contact KAVO.', { title: 'Account locked', icon: 'user', tone: 'error' }); return; }
+          if (d.code === 'social') { ToastStore.push('This account uses ' + (d.provider || 'social') + ' sign-in. Continue with ' + (d.provider || 'Google, Instagram or Twitter') + '.', { title: 'Use social login', icon: 'user', tone: 'warn' }); return; }
+          if (d.code === 'use_email') { ToastStore.push('More than one account has this name. Please log in with your email.', { title: 'Use your email', icon: 'user', tone: 'warn' }); return; }
+          if (d.code === 'no_password') { ToastStore.push('This account has no password yet. Please contact KAVO to reset it.', { title: 'Password needed', icon: 'user', tone: 'warn' }); return; }
+          ToastStore.push('Sign-in failed. Please try again.', { title: 'Sign-in failed', icon: 'user', tone: 'error' });
+        });
+        return;
+      }
       // Only registered clients (in pps_clients) may log in. Match by email,
       // falling back to full name as the identifier.
       const client = ClientStore.findByEmail(id) || ClientStore.read().find((c) => c.name && c.name.toLowerCase() === id.toLowerCase());
@@ -887,13 +953,33 @@
       ModalStore.close();
       ToastStore.push(`Welcome back, ${fn}!`, { title: 'Signed in', icon: 'check', tone: 'ok' });
     };
-    const doSignup = () => {
+    const doSignup = (local) => {
       setTouched(true);
       const okEmail = /.+@.+\..+/.test(signup.email);
       if (!signup.first.trim() || !signup.last.trim() || !okEmail || !signup.phone.trim() || !signup.address.trim() || !signup.pw.trim() || signup.pw !== signup.confirm || !signup.agree) {
         ToastStore.push(signup.pw && signup.pw !== signup.confirm ? "Passwords don't match." : 'Complete all fields and accept the policy.', { title: 'Check the form', icon: 'user', tone: 'error' }); return;
       }
       const email = signup.email.trim();
+      if (local !== true) {
+        if (busyRef.current) return; busyRef.current = true;
+        authApi('signup', { firstName: signup.first.trim(), lastName: signup.last.trim(), email, phone: signup.phone.trim(), address: signup.address.trim(), password: signup.pw }).then((res) => {
+          busyRef.current = false;
+          if (!res) { doSignup(true); return; }
+          if (res.offline) { ToastStore.push("Can't connect right now. Check your internet and try again.", { title: 'No connection', icon: 'user', tone: 'error' }); return; }
+          const d = res.data || {};
+          if (d.client) { signedIn(ClientStore.put(d.client), 'Account created! Welcome, {fn}!', 'Account created'); return; }
+          if (d.code === 'exists') {
+            ToastStore.push('An account with this email already exists. Please log in.', { title: 'Already registered', icon: 'user', tone: 'warn' });
+            setTab('login'); setTouched(false);
+            setLogin((s) => ({ ...s, id: email }));
+            return;
+          }
+          if (d.code === 'weak_password') { ToastStore.push('Use a password of at least 4 characters.', { title: 'Check the form', icon: 'user', tone: 'error' }); return; }
+          if (d.code === 'bad_email') { ToastStore.push('Enter a valid email address.', { title: 'Check the form', icon: 'user', tone: 'error' }); return; }
+          ToastStore.push('Sign-up failed. Please try again.', { title: 'Sign-up failed', icon: 'user', tone: 'error' });
+        });
+        return;
+      }
       // Edge case: don't let the same email register twice.
       if (ClientStore.findByEmail(email)) {
         ToastStore.push('An account with this email already exists. Please log in.', { title: 'Already registered', icon: 'user', tone: 'warn' });
