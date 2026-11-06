@@ -1,7 +1,7 @@
 // reports.jsx — Advanced Reports module: filterable tables + CSV export.
 // Wraps the existing analytics charts (AdminReportsOverview) as the Overview tab
-// and adds Clients, Delivered, Pending, Products & Stock, Payments and Accounts
-// reports. Overrides window.AdminReports (loaded after dashboard.jsx).
+// and adds Client Ledgers (statements of account), Clients, Delivered, Pending,
+// Products & Stock, Payments and Accounts reports. Overrides window.AdminReports (loaded after dashboard.jsx).
 (function () {
   const { Icon } = window;
   const T = window.ADMIN_T, F = window.ADMIN_F;
@@ -392,9 +392,402 @@
     );
   }
 
+  // ═══════════════════════════ CLIENT LEDGERS ══════════════════════════════
+  // Statement of account per client: every delivered order / delivery note is a
+  // debit, every approved payment (receipt or verified online payment) is a
+  // credit, with opening balance brought forward and a running balance.
+  // Filter by client, period, currency, entry type and text; print a branded
+  // statement (PDF) or export CSV. "All clients" shows the debtors summary.
+  const LEDGER_CO = {
+    name: 'Kavo Grid (U) Ltd.',
+    address: 'Plot 24, Ntinda Industrial Area, Kampala, Uganda',
+    postal: 'P.O. Box 219047, Kampala – Uganda',
+    phone: '+256764250125',
+    email: 'kavogrid@gmail.com',
+    web: 'kavogrid.org',
+    tin: '1059988191',
+  };
+  const lNorm = (v) => String(v || '').trim().toLowerCase();
+  const lEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const lToday = () => { const x = new Date(); return new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const lMoney = (n, cur) => (!cur || cur === 'UGX') ? 'USh ' + Math.round(Number(n) || 0).toLocaleString('en-US') : (window.Q_fmtMoney ? window.Q_fmtMoney(n, cur) : cur + ' ' + Math.round(Number(n) || 0).toLocaleString('en-US'));
+  const lBal = (n, cur) => (n < -0.5 ? lMoney(-n, cur) + ' CR' : lMoney(Math.max(0, n), cur));
+  const lDays = (from, to) => { const a = new Date(from).getTime(), b = new Date(to).getTime(); return isNaN(a) || isNaN(b) ? 0 : Math.max(0, Math.floor((b - a) / 86400000)); };
+  const accName = (c) => c.companyName || c.name || '—';
+
+  // Registered clients plus any walk-in / unregistered names found on
+  // delivered invoices or receipts, so no account is left out.
+  function ledgerAccounts(d, L, receipts) {
+    const known = new Set();
+    d.clients.forEach((c) => [c.name, c.companyName].filter(Boolean).forEach((n) => known.add(lNorm(n))));
+    const ids = new Set(d.clients.map((c) => c.id));
+    const extra = {};
+    const add = (id, name, x) => {
+      const n = lNorm(name);
+      if ((id && ids.has(id)) || !n || n === '—' || known.has(n) || extra[n]) return;
+      extra[n] = { id: 'name:' + n, name: String(name).trim(), phone: x.phone || '', email: x.email || '', address: x.address || '', status: 'Unregistered', unregistered: true };
+    };
+    L.invoices.forEach((i) => add(i.clientId, i.clientName, { phone: i.clientPhone, email: i.clientEmail, address: i.clientAddress }));
+    receipts.forEach((r) => add(r.clientId, r.clientName, { phone: r.clientPhone, email: r.clientEmail, address: r.clientAddress }));
+    return [...d.clients, ...Object.values(extra)].sort((a, b) => accName(a).localeCompare(accName(b)));
+  }
+
+  function ledgerEntries(c, d, L, quotes, deliveries, receipts) {
+    const h = window.KG_clientHistory(c, d, L, quotes, deliveries, receipts);
+    const rIds = new Set(h.receipts.map((r) => r.id)), invKeys = new Set(h.invoices.map((i) => i.key));
+    const entries = [];
+    h.invoices.forEach((i) => entries.push({
+      id: 'i_' + i.key, kind: 'Invoice', date: i.date || '', ref: i.ref, currency: i.currency || 'UGX', debit: Number(i.total) || 0, credit: 0, inv: i,
+      desc: (i.type === 'order' ? 'Goods delivered · online order' : 'Goods delivered · delivery note') + (i.quote ? ' · Qtn ' + i.quote : '') + (i.parts > 1 ? ` · part ${i.part} of ${i.parts}` : '') + (i.total <= 0 ? ' · amount to be confirmed' : ''),
+    }));
+    L.payments.filter((p) => rIds.has(p.id) || (p.number === 'Online' && invKeys.has(p.key))).forEach((p) => entries.push({
+      id: 'p_' + p.id, kind: 'Payment', date: p.date || '', ref: p.number === 'Online' ? 'ONLINE' : p.number, currency: p.currency || 'UGX', debit: 0, credit: Number(p.amount) || 0, receipt: p.receipt,
+      desc: 'Payment received · ' + (p.method || '—') + (p.reference ? ' (' + p.reference + ')' : '') + (p.ref && p.ref !== '—' ? ' · for ' + p.ref : '') + (p.type === 'Part' ? ' · part' : ''),
+    }));
+    entries.sort((a, b) => a.date.localeCompare(b.date) || ((b.debit > 0) - (a.debit > 0)) || String(a.ref).localeCompare(String(b.ref)));
+    return { h, entries };
+  }
+
+  // Opening balance b/f, period rows with running balance, closing balance and
+  // ageing of unpaid invoices (as at the end of the period).
+  function ledgerStatement(entries, cur, from, to) {
+    const es = entries.filter((e) => e.currency === cur);
+    let opening = 0;
+    es.forEach((e) => { if (from && e.date < from) opening += e.debit - e.credit; });
+    let bal = opening, debits = 0, credits = 0;
+    const rows = [];
+    es.forEach((e) => {
+      if ((from && e.date < from) || (to && e.date > to)) return;
+      bal += e.debit - e.credit; debits += e.debit; credits += e.credit;
+      rows.push({ ...e, balance: bal });
+    });
+    const asOf = to || lToday();
+    const aging = { current: 0, d30: 0, d60: 0, d90: 0 };
+    es.filter((e) => e.inv && e.date <= asOf && e.inv.balance > 0).forEach((e) => {
+      const age = lDays(e.date, asOf), b = e.inv.balance;
+      if (age <= 30) aging.current += b; else if (age <= 60) aging.d30 += b; else if (age <= 90) aging.d60 += b; else aging.d90 += b;
+    });
+    return { opening, rows, debits, credits, closing: bal, aging, asOf };
+  }
+
+  const PERIODS = ['All time', 'This month', 'Last month', 'This quarter', 'This year', 'Last year', 'Custom'];
+  function periodRange(p) {
+    const n = new Date(), y = n.getFullYear(), m = n.getMonth();
+    const iso = (dt) => new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    if (p === 'This month') return [iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0))];
+    if (p === 'Last month') return [iso(new Date(y, m - 1, 1)), iso(new Date(y, m, 0))];
+    if (p === 'This quarter') { const q = Math.floor(m / 3) * 3; return [iso(new Date(y, q, 1)), iso(new Date(y, q + 3, 0))]; }
+    if (p === 'This year') return [y + '-01-01', y + '-12-31'];
+    if (p === 'Last year') return [(y - 1) + '-01-01', (y - 1) + '-12-31'];
+    return ['', ''];
+  }
+  const periodLabel = (from, to) => from || to ? (from ? A_fmtDate(from) : 'Start') + ' – ' + (to ? A_fmtDate(to) : A_fmtDate(lToday())) : 'All transactions to ' + A_fmtDate(lToday());
+
+  // ── Printable documents (hidden iframe, same approach as receipts) ──────
+  const LEDGER_CSS = `@page{size:A4;margin:13mm}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,sans-serif;color:#0B1A33;font-size:11.5px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;border-bottom:2px solid #0B1A33;padding-bottom:14px}
+.logo{height:52px}
+.co{text-align:right;font-size:10.5px;color:#5A6B85;line-height:1.7}
+.bar{display:flex;justify-content:space-between;align-items:flex-end;margin:18px 0 16px}
+.ttl{font-size:24px;font-weight:800;letter-spacing:2.4px;color:#1457E6}
+.num{font-size:12.5px;font-weight:800;text-align:right}.num span{display:block;font-size:10.5px;color:#8A98B0;font-weight:700;margin-top:2px}
+.meta{display:grid;grid-template-columns:1.2fr 1fr;gap:24px;margin-bottom:16px}
+.lbl{font-size:9.5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#8A98B0;margin-bottom:5px}
+.cl{font-size:14.5px;font-weight:800;margin-bottom:3px}
+.to div{line-height:1.65;color:#5A6B85}
+.facts{border:1px solid #E4E9F2;border-radius:9px;overflow:hidden;align-self:start}
+.fact{display:flex;justify-content:space-between;gap:14px;padding:6px 11px;font-size:11px}
+.fact:not(:last-child){border-bottom:1px solid #EDF1F7}
+.fact span{color:#8A98B0;font-weight:700}.fact strong{text-align:right}
+.sum{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #E4E9F2;border-radius:9px;overflow:hidden;margin-bottom:16px}
+.sum div{padding:9px 12px}.sum div:not(:last-child){border-right:1px solid #EDF1F7}
+.sum span{display:block;font-size:9.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#8A98B0}
+.sum strong{display:block;font-size:13.5px;margin-top:3px;font-variant-numeric:tabular-nums}
+.sum .due{background:#0B1A33}.sum .due span{color:#B8C4D9}.sum .due strong{color:#fff}
+table.items{width:100%;border-collapse:collapse}
+table.items th{background:#0B1A33;color:#fff;font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:8px 9px;text-align:left}
+table.items td{padding:7px 9px;border-bottom:1px solid #EDF1F7;font-size:11px;vertical-align:top}
+table.items tbody tr:nth-child(even){background:#F7F9FC}
+table.items tr.bf td{font-style:italic;color:#5A6B85;background:#F4F7FC}
+table.items tfoot td{border-top:2px solid #0B1A33;border-bottom:none;font-weight:800;font-size:11.5px;padding-top:9px}
+.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.c{text-align:center}.mono{font-weight:700;white-space:nowrap}
+.muted{color:#8A98B0}.red{color:#C9373C}.green{color:#119C5B}
+.age{margin-top:16px}
+.age table{width:100%;border-collapse:collapse;border:1px solid #E4E9F2}
+.age th{font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:#5A6B85;background:#F4F7FC;padding:7px 9px;text-align:right;border-bottom:1px solid #E4E9F2}
+.age td{padding:8px 9px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+.note{margin-top:16px;font-size:10.5px;color:#5A6B85;line-height:1.7}
+.stamp{display:inline-block;border:2px solid #119C5B;color:#119C5B;font-weight:800;letter-spacing:2px;padding:5px 14px;border-radius:6px;font-size:12px;transform:rotate(-3deg);margin-top:6px}
+.sign{margin-top:30px;display:flex;justify-content:space-between;gap:40px}
+.sigbox{flex:1;border-top:1px solid #8A98B0;padding-top:6px;font-size:10px;color:#5A6B85;font-weight:700}
+.foot{margin-top:22px;padding-top:10px;border-top:1px solid #E4E9F2;text-align:center;font-size:9.5px;color:#8A98B0}
+.page{break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}`;
+
+  const ledgerHead = (title, numHtml) => `<div class="top"><img class="logo" src="${window.COMPANY_LOGO || ''}" alt="${lEsc(LEDGER_CO.name)}" />
+<div class="co"><div><strong style="color:#0B1A33">${lEsc(LEDGER_CO.name)}</strong></div><div>${lEsc(LEDGER_CO.address)}</div><div>${lEsc(LEDGER_CO.postal)}</div><div>${lEsc(LEDGER_CO.phone)}</div><div>${lEsc(LEDGER_CO.email)} &middot; ${lEsc(LEDGER_CO.web)}</div><div><strong>TIN: ${lEsc(LEDGER_CO.tin)}</strong></div></div></div>
+<div class="bar"><div class="ttl">${title}</div><div class="num">${numHtml}</div></div>`;
+  const ledgerFoot = () => `<div class="foot">${lEsc(LEDGER_CO.name)} &middot; ${lEsc(LEDGER_CO.address)} &middot; ${lEsc(LEDGER_CO.postal)} &middot; ${lEsc(LEDGER_CO.phone)} &middot; ${lEsc(LEDGER_CO.email)} &middot; ${lEsc(LEDGER_CO.web)} &middot; TIN ${lEsc(LEDGER_CO.tin)}</div>`;
+
+  function statementBody(acc, st, cur, from, to, by) {
+    const stNo = 'SOA-' + String(acc.id || '').replace(/^name:/, '').replace(/[^0-9A-Za-z]/g, '').slice(-6).toUpperCase() + '-' + lToday().replace(/-/g, '');
+    const rows = st.rows.map((e) => `<tr><td class="mono">${lEsc(A_fmtDate(e.date))}</td><td class="mono">${lEsc(e.ref)}</td><td>${lEsc(e.desc)}</td>
+<td class="r">${e.debit ? lMoney(e.debit, cur) : ''}</td><td class="r">${e.credit ? lMoney(e.credit, cur) : ''}</td><td class="r"><strong>${lBal(e.balance, cur)}</strong></td></tr>`).join('');
+    const a = st.aging;
+    const settled = st.closing < 1 && st.rows.length > 0;
+    return `${ledgerHead('STATEMENT OF ACCOUNT', `No. ${lEsc(stNo)}<span>Issued ${lEsc(A_fmtDate(lToday()))}</span>`)}
+<div class="meta"><div class="to"><div class="lbl">Statement For</div><div class="cl">${lEsc(accName(acc))}</div>
+${acc.companyName && acc.name && acc.companyName !== acc.name ? `<div>Attn: ${lEsc(acc.name)}</div>` : ''}${acc.address ? `<div>${lEsc(acc.address)}</div>` : ''}${acc.phone ? `<div>${lEsc(acc.phone)}</div>` : ''}${acc.email ? `<div>${lEsc(acc.email)}</div>` : ''}</div>
+<div class="facts"><div class="fact"><span>Account</span><strong>${lEsc(acc.unregistered ? 'Walk-in / unregistered' : (acc.id || '—'))}</strong></div>
+<div class="fact"><span>Period</span><strong>${lEsc(periodLabel(from, to))}</strong></div>
+<div class="fact"><span>Currency</span><strong>${lEsc(cur)}</strong></div>
+<div class="fact"><span>Transactions</span><strong>${st.rows.length}</strong></div></div></div>
+<div class="sum"><div><span>Opening balance</span><strong>${lBal(st.opening, cur)}</strong></div><div><span>Invoiced (debits)</span><strong>${lMoney(st.debits, cur)}</strong></div>
+<div><span>Payments (credits)</span><strong class="green">${lMoney(st.credits, cur)}</strong></div><div class="due"><span>${st.closing < -0.5 ? 'Credit balance' : 'Balance due'}</span><strong>${lBal(st.closing, cur)}</strong></div></div>
+<table class="items"><thead><tr><th>Date</th><th>Reference</th><th>Description</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead>
+<tbody><tr class="bf"><td>${lEsc(from ? A_fmtDate(from) : '')}</td><td></td><td>Opening balance brought forward</td><td></td><td></td><td class="r">${lBal(st.opening, cur)}</td></tr>
+${rows || '<tr><td colspan="6" class="c muted">No transactions in this period</td></tr>'}</tbody>
+<tfoot><tr><td colspan="3">Totals for the period</td><td class="r">${lMoney(st.debits, cur)}</td><td class="r">${lMoney(st.credits, cur)}</td><td class="r">${lBal(st.closing, cur)}</td></tr></tfoot></table>
+<div class="age"><div class="lbl">Ageing of unpaid invoices as at ${lEsc(A_fmtDate(st.asOf))}</div><table><thead><tr><th>Current (0–30 days)</th><th>31–60 days</th><th>61–90 days</th><th>Over 90 days</th><th>Total unpaid</th></tr></thead>
+<tbody><tr><td>${lMoney(a.current, cur)}</td><td>${lMoney(a.d30, cur)}</td><td class="${a.d60 > 0 ? 'red' : ''}">${lMoney(a.d60, cur)}</td><td class="${a.d90 > 0 ? 'red' : ''}">${lMoney(a.d90, cur)}</td><td>${lMoney(a.current + a.d30 + a.d60 + a.d90, cur)}</td></tr></tbody></table></div>
+<div class="note">${settled ? '<div class="stamp">ACCOUNT SETTLED</div>' : ''}
+<p>Please review this statement and report any discrepancy within 14 days of the issue date; otherwise the balance shown will be taken as correct. Kindly quote the invoice / delivery note reference with every payment.${st.closing > 0.5 ? ` <strong>Amount now due: ${lMoney(st.closing, cur)}.</strong>` : ''}</p></div>
+<div class="sign"><div class="sigbox">Prepared by: ${lEsc(by || '')}</div><div class="sigbox">For ${lEsc(LEDGER_CO.name)}</div><div class="sigbox">Client confirmation (signature &amp; date)</div></div>
+${ledgerFoot()}`;
+  }
+
+  function summaryBody(list, cur, from, to, by) {
+    const t = list.reduce((s, r) => ({ o: s.o + r.st.opening, d: s.d + r.st.debits, c: s.c + r.st.credits, b: s.b + r.st.closing, a: s.a + r.st.aging.d30 + r.st.aging.d60 + r.st.aging.d90 }), { o: 0, d: 0, c: 0, b: 0, a: 0 });
+    const rows = list.map((r, i) => `<tr><td class="c">${i + 1}</td><td><strong>${lEsc(accName(r.acc))}</strong>${r.acc.phone ? `<div class="muted">${lEsc(r.acc.phone)}</div>` : ''}</td>
+<td class="r">${lBal(r.st.opening, cur)}</td><td class="r">${lMoney(r.st.debits, cur)}</td><td class="r">${lMoney(r.st.credits, cur)}</td>
+<td class="r">${lMoney(r.st.aging.d30 + r.st.aging.d60 + r.st.aging.d90, cur)}</td><td class="r"><strong>${lBal(r.st.closing, cur)}</strong></td></tr>`).join('');
+    return `${ledgerHead('CLIENT LEDGER SUMMARY', `${lEsc(periodLabel(from, to))}<span>Issued ${lEsc(A_fmtDate(lToday()))} · ${lEsc(cur)}</span>`)}
+<div class="sum"><div><span>Opening balances</span><strong>${lBal(t.o, cur)}</strong></div><div><span>Invoiced</span><strong>${lMoney(t.d, cur)}</strong></div>
+<div><span>Collected</span><strong class="green">${lMoney(t.c, cur)}</strong></div><div class="due"><span>Total receivable</span><strong>${lBal(t.b, cur)}</strong></div></div>
+<table class="items"><thead><tr><th class="c">#</th><th>Client</th><th class="r">Opening</th><th class="r">Invoiced</th><th class="r">Paid</th><th class="r">Over 30 days</th><th class="r">Closing balance</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="7" class="c muted">No accounts</td></tr>'}</tbody>
+<tfoot><tr><td></td><td>Totals · ${list.length} account${list.length === 1 ? '' : 's'}</td><td class="r">${lBal(t.o, cur)}</td><td class="r">${lMoney(t.d, cur)}</td><td class="r">${lMoney(t.c, cur)}</td><td class="r">${lMoney(t.a, cur)}</td><td class="r">${lBal(t.b, cur)}</td></tr></tfoot></table>
+<div class="sign"><div class="sigbox">Prepared by: ${lEsc(by || '')}</div><div class="sigbox">Checked by</div><div class="sigbox">Approved by</div></div>
+${ledgerFoot()}`;
+  }
+
+  function printLedgerDoc(title, pages) {
+    const old = document.getElementById('kg-ledger-print');
+    if (old) old.remove();
+    const f = document.createElement('iframe');
+    f.id = 'kg-ledger-print';
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+    document.body.appendChild(f);
+    const doc = f.contentDocument;
+    doc.open();
+    doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${lEsc(title)}</title><style>${LEDGER_CSS}</style></head><body>${pages.map((p) => `<div class="page">${p}</div>`).join('')}</body></html>`);
+    doc.close();
+    const prevTitle = document.title;
+    document.title = title;
+    const restore = () => { document.title = prevTitle; };
+    try { f.contentWindow.addEventListener('afterprint', () => setTimeout(restore, 400)); } catch (e) {}
+    setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { restore(); } }, 350);
+  }
+
+  function ClientLedgerReport({ d }) {
+    const L = window.KG_useLedger();
+    const receipts = window.useReceipts();
+    const quotes = window.useQuotes ? window.useQuotes() : [];
+    const deliveries = window.useDeliveries ? window.useDeliveries() : [];
+    const auth = window.useAuth ? window.useAuth() : null;
+    const by = auth ? auth.name : '';
+    const fmt = window.KG_fmtLedger, PayPill = window.KG_PayPill;
+    const [clientId, setClientId] = React.useState('all');
+    const [period, setPeriod] = React.useState('All time');
+    const [from, setFrom] = React.useState('');
+    const [to, setTo] = React.useState('');
+    const [cur, setCur] = React.useState('UGX');
+    const [kind, setKind] = React.useState('All entries');
+    const [bal, setBal] = React.useState('All accounts');
+    const [q, setQ] = React.useState('');
+
+    const accounts = React.useMemo(() => ledgerAccounts(d, L, receipts), [d, L, receipts]);
+    const all = React.useMemo(() => accounts.map((acc) => ({ acc, ...ledgerEntries(acc, d, L, quotes, deliveries, receipts) })), [accounts, d, L, quotes, deliveries, receipts]);
+    const currencies = React.useMemo(() => {
+      const s = new Set(['UGX']); all.forEach((a) => a.entries.forEach((e) => s.add(e.currency))); return Array.from(s);
+    }, [all]);
+    const pickPeriod = (p) => { setPeriod(p); if (p !== 'Custom') { const [a, b] = periodRange(p); setFrom(a); setTo(b); } };
+    const setFromC = (v) => { setFrom(v); setPeriod(v || to ? 'Custom' : 'All time'); };
+    const setToC = (v) => { setTo(v); setPeriod(from || v ? 'Custom' : 'All time'); };
+    const term = q.trim().toLowerCase();
+    const sel = clientId === 'all' ? null : all.find((a) => a.acc.id === clientId);
+
+    const controls = (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Select value={clientId} onChange={(v) => { setClientId(v); setQ(''); setKind('All entries'); }} width={230}
+          options={[{ value: 'all', label: 'All clients (summary)' }, ...accounts.map((a) => ({ value: a.id, label: accName(a) + (a.unregistered ? ' · walk-in' : '') }))]} />
+        <Select value={period} onChange={pickPeriod} options={PERIODS} width={150} />
+        <DateRange from={from} to={to} onFrom={setFromC} onTo={setToC} />
+        {currencies.length > 1 && <Select value={cur} onChange={setCur} options={currencies} width={100} />}
+      </div>
+    );
+    const tile = (label, value, color, dark) => (
+      <div style={{ border: `1px solid ${dark ? T.navy : T.line}`, background: dark ? T.navy : '#fff', borderRadius: 14, padding: '13px 15px' }}>
+        <div style={{ fontSize: 11.5, fontWeight: 800, color: dark ? 'rgba(255,255,255,.65)' : T.sub, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: dark ? '#fff' : (color || T.ink), marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      </div>
+    );
+    const tfoot = (cells) => (
+      <tr style={{ background: T.surface, borderTop: `2px solid ${T.ink}` }}>{cells.map((c, i) => <td key={i} style={{ padding: '13px 16px', fontSize: 13.5, fontWeight: 800, color: T.ink, textAlign: c.align || 'left', fontVariantNumeric: 'tabular-nums' }}>{c.v}</td>)}</tr>
+    );
+
+    // ── All clients: debtors summary ──
+    if (!sel) {
+      let list = all.map((a) => ({ ...a, st: ledgerStatement(a.entries, cur, from, to) }))
+        .filter((r) => r.st.rows.length || Math.abs(r.st.opening) > 0.5);
+      if (term) list = list.filter((r) => (accName(r.acc) + ' ' + (r.acc.name || '') + ' ' + (r.acc.email || '') + ' ' + (r.acc.phone || '')).toLowerCase().includes(term));
+      if (bal === 'With balance due') list = list.filter((r) => r.st.closing > 0.5);
+      else if (bal === 'Overdue (30+ days)') list = list.filter((r) => r.st.aging.d30 + r.st.aging.d60 + r.st.aging.d90 > 0.5);
+      else if (bal === 'Settled') list = list.filter((r) => Math.abs(r.st.closing) <= 0.5);
+      else if (bal === 'Credit balance') list = list.filter((r) => r.st.closing < -0.5);
+      list.sort((a, b) => b.st.closing - a.st.closing || accName(a.acc).localeCompare(accName(b.acc)));
+      const t = list.reduce((s, r) => ({ o: s.o + r.st.opening, d: s.d + r.st.debits, c: s.c + r.st.credits, b: s.b + r.st.closing, a: s.a + r.st.aging.d30 + r.st.aging.d60 + r.st.aging.d90 }), { o: 0, d: 0, c: 0, b: 0, a: 0 });
+      const exp = () => downloadCSV('client-ledgers-summary.csv',
+        ['Client', 'Phone', 'Email', 'Currency', 'Period from', 'Period to', 'Opening balance', 'Invoiced', 'Paid', 'Over 30 days', 'Closing balance'],
+        list.map((r) => [accName(r.acc), r.acc.phone, r.acc.email, cur, from, to || lToday(), plain(r.st.opening), plain(r.st.debits), plain(r.st.credits), plain(r.st.aging.d30 + r.st.aging.d60 + r.st.aging.d90), plain(r.st.closing)]));
+      const printAll = () => printLedgerDoc('Client-ledger-summary-' + lToday(), [summaryBody(list, cur, from, to, by)]);
+      const printStatements = () => printLedgerDoc('Statements-' + lToday(), list.map((r) => statementBody(r.acc, r.st, cur, from, to, by)));
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            {tile('Accounts', list.length)}
+            {tile('Opening balances', lBal(t.o, cur))}
+            {tile('Invoiced in period', lMoney(t.d, cur))}
+            {tile('Collected in period', lMoney(t.c, cur), T.green)}
+            {tile('Over 30 days', lMoney(t.a, cur), t.a > 0 ? T.red : T.ink)}
+            {tile('Total receivable', lBal(t.b, cur), null, true)}
+          </div>
+          <ReportSection title="Client Ledgers" sub={`${periodLabel(from, to)} · ${cur} · pick a client to open their full ledger`}
+            controls={controls} onExport={exp} exportDisabled={!list.length}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '12px 18px', borderBottom: `1px solid ${T.line}` }}>
+              <Search value={q} onChange={setQ} placeholder="Search client, phone, email…" width={250} />
+              <Select value={bal} onChange={setBal} options={['All accounts', 'With balance due', 'Overdue (30+ days)', 'Settled', 'Credit balance']} width={190} />
+              <div style={{ flex: 1 }} />
+              <Button icon="doc" variant="ghost" size="sm" onClick={printAll} style={!list.length ? { opacity: 0.5, pointerEvents: 'none' } : null}>Print summary</Button>
+              <Button icon="download" variant="primary" size="sm" onClick={printStatements} style={!list.length ? { opacity: 0.5, pointerEvents: 'none' } : null}>Print all statements</Button>
+            </div>
+            {list.length === 0 ? <Empty icon="user" title="No client ledgers match" sub="Ledgers come from delivered orders, delivery notes and approved payments. Try another period or filter." /> : (
+              <Table columns={[{ label: 'Client' }, { label: 'Opening', align: 'right' }, { label: 'Invoiced', align: 'right' }, { label: 'Paid', align: 'right' }, { label: 'Over 30 days', align: 'right' }, { label: 'Closing balance', align: 'right' }, { label: '', align: 'right' }]}>
+                {list.map((r, i) => {
+                  const over = r.st.aging.d30 + r.st.aging.d60 + r.st.aging.d90;
+                  return (
+                    <Row key={r.acc.id} i={i} onClick={() => setClientId(r.acc.id)}>
+                      <Td><div style={{ fontWeight: 800 }}>{accName(r.acc)}</div><div style={{ fontSize: 12, color: T.sub, fontWeight: 600, marginTop: 2 }}>{r.acc.unregistered ? 'Walk-in / unregistered' : (r.acc.phone || r.acc.email || '')} · {r.st.rows.length} entr{r.st.rows.length === 1 ? 'y' : 'ies'}</div></Td>
+                      <Td align="right" style={{ fontWeight: 700, color: T.sub, fontVariantNumeric: 'tabular-nums' }}>{lBal(r.st.opening, cur)}</Td>
+                      <Td align="right" style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{lMoney(r.st.debits, cur)}</Td>
+                      <Td align="right" style={{ fontWeight: 700, color: T.green, fontVariantNumeric: 'tabular-nums' }}>{lMoney(r.st.credits, cur)}</Td>
+                      <Td align="right" style={{ fontWeight: 800, color: over > 0 ? T.red : T.faint, fontVariantNumeric: 'tabular-nums' }}>{lMoney(over, cur)}</Td>
+                      <Td align="right" style={{ fontWeight: 800, color: r.st.closing > 0.5 ? T.red : T.green, fontVariantNumeric: 'tabular-nums' }}>{lBal(r.st.closing, cur)}</Td>
+                      <Td align="right"><div onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', gap: 6 }}>
+                        <window.IconBtn icon="download" tone="blue" title="Print statement" onClick={() => printLedgerDoc(accName(r.acc) + ' statement ' + lToday(), [statementBody(r.acc, r.st, cur, from, to, by)])} />
+                        <Button size="sm" variant="ghost" icon="doc" onClick={() => setClientId(r.acc.id)}>Ledger</Button>
+                      </div></Td>
+                    </Row>
+                  );
+                })}
+                {tfoot([{ v: `Totals · ${list.length}` }, { v: lBal(t.o, cur), align: 'right' }, { v: lMoney(t.d, cur), align: 'right' }, { v: lMoney(t.c, cur), align: 'right' }, { v: lMoney(t.a, cur), align: 'right' }, { v: lBal(t.b, cur), align: 'right' }, { v: '' }])}
+              </Table>
+            )}
+          </ReportSection>
+        </div>
+      );
+    }
+
+    // ── One client: full ledger / statement ──
+    const acc = sel.acc;
+    const st = ledgerStatement(sel.entries, cur, from, to);
+    const shown = st.rows.filter((e) => {
+      if (kind === 'Invoices' && !e.debit && !e.inv) return false;
+      if (kind === 'Payments' && !e.credit) return false;
+      if (kind === 'Unpaid invoices' && !(e.inv && e.inv.balance > 0)) return false;
+      if (term && !(e.ref + ' ' + e.desc).toLowerCase().includes(term)) return false;
+      return true;
+    });
+    const filtered = kind !== 'All entries' || !!term;
+    const a = st.aging;
+    const exp = () => downloadCSV(accName(acc).replace(/[^\w-]+/g, '-') + '-ledger.csv',
+      ['Date', 'Reference', 'Type', 'Description', 'Currency', 'Debit', 'Credit', 'Balance'],
+      [[from || '', '', 'Opening', 'Opening balance brought forward', cur, '', '', plain(st.opening)],
+        ...shown.map((e) => [e.date, e.ref, e.kind, e.desc, cur, e.debit ? plain(e.debit) : '', e.credit ? plain(e.credit) : '', plain(e.balance)]),
+        ['', '', 'Closing', 'Closing balance', cur, plain(st.debits), plain(st.credits), plain(st.closing)]]);
+    const print = () => printLedgerDoc(accName(acc) + ' statement ' + lToday(), [statementBody(acc, { ...st, rows: filtered ? shown : st.rows }, cur, from, to, by)]);
+    const idx = all.findIndex((x) => x.acc.id === acc.id);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <Card style={{ padding: '16px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: T.blueWash, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name="user" size={22} color={T.blue} stroke={2} /></div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: T.ink }}>{accName(acc)}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: T.sub, marginTop: 3, lineHeight: 1.6 }}>
+                {[acc.companyName && acc.name !== acc.companyName ? 'Attn: ' + acc.name : '', acc.phone, acc.email, acc.address].filter(Boolean).join(' · ') || (acc.unregistered ? 'Walk-in / unregistered client' : '')}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Button variant="ghost" size="sm" icon="user" onClick={() => setClientId('all')}>All clients</Button>
+              <Button variant="ghost" size="sm" onClick={() => idx > 0 && setClientId(all[idx - 1].acc.id)} style={idx <= 0 ? { opacity: 0.45, pointerEvents: 'none' } : null}>‹ Prev</Button>
+              <Button variant="ghost" size="sm" onClick={() => idx < all.length - 1 && setClientId(all[idx + 1].acc.id)} style={idx >= all.length - 1 ? { opacity: 0.45, pointerEvents: 'none' } : null}>Next ›</Button>
+              <Button variant="primary" size="sm" icon="download" onClick={print}>Print statement</Button>
+            </div>
+          </div>
+        </Card>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          {tile('Opening balance', lBal(st.opening, cur))}
+          {tile('Invoiced (debits)', lMoney(st.debits, cur))}
+          {tile('Paid (credits)', lMoney(st.credits, cur), T.green)}
+          {tile(st.closing < -0.5 ? 'Credit balance' : 'Balance due', lBal(st.closing, cur), null, true)}
+        </div>
+        <ReportSection title="Client Ledger" sub={`${periodLabel(from, to)} · ${cur} · ${shown.length} of ${st.rows.length} entr${st.rows.length === 1 ? 'y' : 'ies'}`}
+          controls={controls} onExport={exp}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '12px 18px', borderBottom: `1px solid ${T.line}` }}>
+            <Select value={kind} onChange={setKind} options={['All entries', 'Invoices', 'Payments', 'Unpaid invoices']} width={170} />
+            <Search value={q} onChange={setQ} placeholder="Search ref, method, quotation…" width={250} />
+            {filtered && <span style={{ fontSize: 12, fontWeight: 700, color: T.sub }}>Balance column still counts every entry</span>}
+          </div>
+          <Table columns={[{ label: 'Date' }, { label: 'Reference' }, { label: 'Description' }, { label: 'Debit', align: 'right' }, { label: 'Credit', align: 'right' }, { label: 'Balance', align: 'right' }, { label: '', align: 'right' }]}>
+            <tr style={{ background: T.surface, borderBottom: `1px solid ${T.lineSoft}` }}>
+              <Td style={{ color: T.sub, fontWeight: 600 }}>{from ? A_fmtDate(from) : ''}</Td><Td /><Td style={{ fontStyle: 'italic', color: T.sub, fontWeight: 700 }}>Opening balance brought forward</Td><Td /><Td />
+              <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{lBal(st.opening, cur)}</Td><Td />
+            </tr>
+            {shown.length === 0 ? <tr><td colSpan={7} style={{ padding: 0 }}><Empty icon="doc" title="No entries" sub="Nothing in this period matches the filters." /></td></tr> : shown.map((e, i) => (
+              <Row key={e.id} i={i}>
+                <Td style={{ color: T.sub, fontWeight: 600, whiteSpace: 'nowrap' }}>{A_fmtDate(e.date)}</Td>
+                <Td><div style={{ fontWeight: 800, whiteSpace: 'nowrap' }}>{e.ref}</div><div style={{ fontSize: 11.5, fontWeight: 800, color: e.debit ? T.blue : T.green, marginTop: 2 }}>{e.kind}</div></Td>
+                <Td style={{ fontWeight: 600, color: T.ink, maxWidth: 360 }}>{e.desc}{e.inv && <div style={{ marginTop: 4 }}><PayPill status={e.inv.status} /></div>}</Td>
+                <Td align="right" style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{e.debit ? fmt(e.debit, cur) : ''}</Td>
+                <Td align="right" style={{ fontWeight: 800, color: T.green, fontVariantNumeric: 'tabular-nums' }}>{e.credit ? fmt(e.credit, cur) : ''}</Td>
+                <Td align="right" style={{ fontWeight: 800, color: e.balance > 0.5 ? T.red : T.green, fontVariantNumeric: 'tabular-nums' }}>{lBal(e.balance, cur)}</Td>
+                <Td align="right">{e.receipt && window.KG_printReceipt && <window.IconBtn icon="download" tone="blue" title="Print receipt" onClick={() => window.KG_printReceipt(e.receipt)} />}</Td>
+              </Row>
+            ))}
+            {tfoot([{ v: 'Closing balance' }, { v: '' }, { v: `as at ${A_fmtDate(to || lToday())}` }, { v: lMoney(st.debits, cur), align: 'right' }, { v: lMoney(st.credits, cur), align: 'right' }, { v: lBal(st.closing, cur), align: 'right' }, { v: '' }])}
+          </Table>
+          <div style={{ padding: '14px 18px', borderTop: `1px solid ${T.line}` }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, color: T.sub, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Ageing of unpaid invoices · as at {A_fmtDate(st.asOf)}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+              {[['0–30 days', a.current, false], ['31–60 days', a.d30, false], ['61–90 days', a.d60, true], ['Over 90 days', a.d90, true]].map(([k, v, warn]) => (
+                <div key={k} style={{ border: `1px solid ${T.line}`, borderRadius: 12, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, color: T.sub }}>{k}</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: warn && v > 0 ? T.red : T.ink, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{lMoney(v, cur)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </ReportSection>
+      </div>
+    );
+  }
+
   // ════════════════════════════════ SHELL ══════════════════════════════════
   const TABS = [
     { id: 'overview', label: 'Overview', icon: 'filter' },
+    { id: 'ledgers', label: 'Client Ledgers', icon: 'doc' },
     { id: 'receivables', label: 'Pending Payments', icon: 'clock' },
     { id: 'payments', label: 'Payments', icon: 'shield' },
     { id: 'delivered', label: 'Delivered', icon: 'truck' },
@@ -421,6 +814,7 @@
           })}
         </div>
         {tab === 'overview' && (window.AdminReportsOverview ? <window.AdminReportsOverview embedded /> : null)}
+        {tab === 'ledgers' && <ClientLedgerReport d={d} />}
         {tab === 'clients' && <ClientsReport d={d} />}
         {tab === 'receivables' && <ReceivablesReport />}
         {tab === 'delivered' && <DeliveredReport d={d} />}
