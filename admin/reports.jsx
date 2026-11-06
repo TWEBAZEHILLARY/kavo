@@ -442,6 +442,7 @@
     }));
     L.payments.filter((p) => rIds.has(p.id) || (p.number === 'Online' && invKeys.has(p.key))).forEach((p) => entries.push({
       id: 'p_' + p.id, kind: 'Payment', date: p.date || '', ref: p.number === 'Online' ? 'ONLINE' : p.number, currency: p.currency || 'UGX', debit: 0, credit: Number(p.amount) || 0, receipt: p.receipt,
+      key: p.key || '', method: p.method || '', reference: p.reference || '', forRef: p.ref || '',
       desc: 'Payment received · ' + (p.method || '—') + (p.reference ? ' (' + p.reference + ')' : '') + (p.ref && p.ref !== '—' ? ' · for ' + p.ref : '') + (p.type === 'Part' ? ' · part' : ''),
     }));
     entries.sort((a, b) => a.date.localeCompare(b.date) || ((b.debit > 0) - (a.debit > 0)) || String(a.ref).localeCompare(String(b.ref)));
@@ -461,7 +462,7 @@
       bal += e.debit - e.credit; debits += e.debit; credits += e.credit;
       rows.push({ ...e, balance: bal });
     });
-    const asOf = to || lToday();
+    const asOf = to && to < lToday() ? to : lToday();
     const aging = { current: 0, d30: 0, d60: 0, d90: 0 };
     es.filter((e) => e.inv && e.date <= asOf && e.inv.balance > 0).forEach((e) => {
       const age = lDays(e.date, asOf), b = e.inv.balance;
@@ -590,6 +591,358 @@ ${ledgerFoot()}`;
     setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { restore(); } }, 350);
   }
 
+  // ── Downloadable PDF: "Bill-wise Details" (one row per invoice / delivery
+  // with the receipts paid against it underneath). Generated in the browser
+  // with jsPDF, loaded on first use, so the file downloads straight away.
+  let pdfLibP = null;
+  function loadPdfLib() {
+    if (window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable) return Promise.resolve(window.jspdf.jsPDF);
+    if (pdfLibP) return pdfLibP;
+    const add = (src) => new Promise((res, rej) => {
+      const s = document.createElement('script'); s.src = src; s.async = true;
+      s.onload = res; s.onerror = () => rej(new Error('Could not load ' + src));
+      document.head.appendChild(s);
+    });
+    pdfLibP = (window.jspdf && window.jspdf.jsPDF ? Promise.resolve() : add('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'))
+      .then(() => add('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js'))
+      .then(() => window.jspdf.jsPDF)
+      .catch((e) => { pdfLibP = null; throw e; });
+    return pdfLibP;
+  }
+
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const tDate = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? (+m[3]) + '-' + MON[+m[2] - 1] + '-' + m[1].slice(2) : (iso || ''); };
+  const tNum = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const tDr = (n) => (Math.abs(n) < 0.005 ? '' : tNum(Math.abs(n)) + (n < 0 ? ' Cr' : ' Dr'));
+  const tCr = (n) => (Math.abs(n) < 0.005 ? '' : tNum(Math.abs(n)) + ' Cr');
+
+  // Bills (invoices) in the period plus older bills still unpaid at the period
+  // end, each with the payments received against it up to that date. Receipts
+  // not linked to a bill are applied to the oldest unpaid bills first (FIFO,
+  // the standard rule); only an overpayment is left "on account".
+  function billwise(sel, cur, from, to, pendingOnly) {
+    const asOf = to && to < lToday() ? to : lToday();
+    const byDate = (a, b) => a.date.localeCompare(b.date);
+    const pays = sel.entries.filter((e) => e.credit && e.currency === cur && e.date <= asOf);
+    const invKeys = new Set(sel.entries.filter((e) => e.inv).map((e) => e.inv.key));
+    let bills = sel.entries.filter((e) => e.inv && e.currency === cur && e.date <= asOf).map((e) => {
+      const ps = pays.filter((p) => p.key === e.inv.key).sort(byDate);
+      const received = ps.reduce((s, p) => s + p.credit, 0);
+      const amount = Number(e.inv.total) || 0;
+      const pending = amount > 0 ? Math.max(0, amount - received) : 0;
+      return { e, inv: e.inv, ps, amount, received, pending, tbc: amount <= 0, bf: !!(from && e.date < from) };
+    }).sort((a, b) => a.e.date.localeCompare(b.e.date) || String(a.inv.ref).localeCompare(String(b.inv.ref)));
+    const onAccount = [];
+    pays.filter((p) => !p.key || !invKeys.has(p.key)).sort(byDate).forEach((p) => {
+      let left = p.credit;
+      bills.forEach((bl) => {
+        if (left < 0.5 || bl.pending < 0.5) return;
+        const take = Math.min(left, bl.pending);
+        bl.ps.push({ ...p, credit: take, auto: true }); bl.received += take; bl.pending -= take; left -= take;
+      });
+      if (left >= 0.5) onAccount.push({ ...p, credit: left });
+    });
+    bills.forEach((bl) => { bl.ps.sort(byDate); bl.overdue = bl.pending > 0.5 ? lDays(bl.e.date, asOf) : 0; });
+    bills = bills.filter((bl) => !bl.bf || bl.pending > 0.5);
+    if (pendingOnly) bills = bills.filter((bl) => bl.pending > 0.5 || bl.tbc);
+    const billed = bills.reduce((s, x) => s + x.amount, 0);
+    const received = bills.reduce((s, x) => s + x.received, 0);
+    const pending = bills.reduce((s, x) => s + x.pending, 0);
+    const unapplied = onAccount.reduce((s, x) => s + x.credit, 0);
+    const aging = { current: 0, d30: 0, d60: 0, d90: 0 };
+    bills.forEach((x) => { if (x.pending <= 0.5) return; const g = x.overdue; if (g <= 30) aging.current += x.pending; else if (g <= 60) aging.d30 += x.pending; else if (g <= 90) aging.d60 += x.pending; else aging.d90 += x.pending; });
+    return { asOf, bills, onAccount, billed, received, pending, unapplied, net: pending - unapplied, aging };
+  }
+
+  // list = [{ acc, sel }]; mode = 'statement' (ledger account + pending bills),
+  // 'ledger', 'billwise' (all bills with receipts) or 'pending'.
+  async function downloadStatementPDF(list, { cur, from, to, mode, by, filename }) {
+    const JsPDF = await loadPdfLib();
+    const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, CX = W / 2;
+    const ink = [11, 26, 51], grey = [90, 107, 133], faint = [138, 152, 176];
+    const period = (from ? tDate(from) : 'Start') + ' to ' + tDate(to || lToday());
+    let cur_acc = null, pendingOnly = false, secSub = 'Bill-wise Details', secTitle = '', showAddr = false;
+
+    const drawn = new Set();
+    const header = () => {
+      drawn.add(doc.internal.getCurrentPageInfo().pageNumber);
+      let y = 15;
+      doc.setTextColor(...ink); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+      doc.text(LEDGER_CO.name.toUpperCase(), CX, y, { align: 'center' }); y += 5;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      [LEDGER_CO.address, LEDGER_CO.postal, 'Tel : ' + LEDGER_CO.phone, 'E-Mail : ' + LEDGER_CO.email + '   ·   ' + LEDGER_CO.web, 'TIN : ' + LEDGER_CO.tin]
+        .forEach((t) => { doc.text(t, CX, y, { align: 'center' }); y += 3.9; });
+      doc.setDrawColor(...ink); doc.setLineWidth(0.3); doc.line(CX - 38, y - 1.8, CX + 38, y - 1.8); y += 4;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+      doc.text(accName(cur_acc).toUpperCase(), CX, y, { align: 'center' }); y += 4.6;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      doc.text(secSub, CX, y, { align: 'center' }); y += 4;
+      if (showAddr && cur_acc && cur_acc.address) {
+        doc.setFontSize(7.6); doc.setTextColor(...grey);
+        const al = doc.splitTextToSize(String(cur_acc.address).toUpperCase(), W - 2 * M);
+        doc.text(al, CX, y, { align: 'center' }); y += 3.4 * al.length + 0.8; doc.setTextColor(...ink);
+      }
+      doc.setFontSize(8); doc.text(period, CX, y, { align: 'center' }); y += 4.4;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+      if (secTitle) doc.text(secTitle, CX, y, { align: 'center' });
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...grey);
+      doc.text('Currency: ' + cur, W - M, y, { align: 'right' });
+      if (cur_acc && (cur_acc.phone || cur_acc.email)) { const c = [cur_acc.phone, cur_acc.email].filter(Boolean).join(' · '); doc.text(c.length > 46 ? c.slice(0, 44) + '…' : c, M, y); }
+      return y + 3;
+    };
+    const TOP = 61;
+
+    const billSection = (acc, bw) => {
+      cur_acc = acc; secSub = 'Bill-wise Details'; secTitle = pendingOnly ? 'Pending Bills' : 'All Bills with Receipts'; showAddr = false;
+      header();
+      const body = [];
+      const sub = { fontSize: 7.3, fontStyle: 'italic', textColor: grey, cellPadding: { top: 0.4, bottom: 0.4, left: 1.5, right: 1.5 } };
+      bw.bills.forEach((b) => {
+        const what = (b.inv.type === 'order' ? 'Online order' : (b.inv.quote ? 'DN · ' + b.inv.quote : 'Delivery note')) + (b.inv.parts > 1 ? ' · part ' + b.inv.part + '/' + b.inv.parts : '') + (b.bf ? ' · b/f' : '');
+        body.push([
+          { content: tDate(b.e.date), styles: { fontStyle: 'bold' } },
+          { content: b.inv.ref + '\n' + what },
+          { content: b.tbc ? 'To be confirmed' : tDr(b.amount), styles: { halign: 'right' } },
+          { content: tCr(b.received), styles: { halign: 'right' } },
+          { content: b.tbc ? '' : (b.pending > 0.5 ? tDr(b.pending) : 'Settled'), styles: { halign: 'right', fontStyle: 'bold', textColor: b.pending > 0.5 ? ink : [17, 156, 91] } },
+          { content: tDate(b.e.date), styles: { halign: 'right' } },
+          { content: b.overdue ? String(b.overdue) : '', styles: { halign: 'right', fontStyle: 'italic', textColor: b.overdue > 60 ? [201, 55, 60] : ink } },
+        ]);
+        b.ps.forEach((p) => body.push([
+          { content: tDate(p.date), styles: { ...sub, halign: 'right' } },
+          { content: '  Rcpt ' + (p.ref === 'ONLINE' ? 'Online checkout' : p.ref) + ' · ' + (p.method || '—') + (p.reference ? ' · ' + p.reference : '') + (p.auto ? ' (applied to oldest bill)' : ''), styles: sub },
+          { content: '', styles: sub },
+          { content: tCr(p.credit), styles: { ...sub, halign: 'right' } },
+          { content: '', styles: sub }, { content: '', styles: sub }, { content: '', styles: sub },
+        ]));
+      });
+      if (!bw.bills.length) body.push([{ content: pendingOnly ? 'No pending bills.' : 'No bills in this period.', colSpan: 7, styles: { halign: 'center', textColor: faint, fontStyle: 'italic' } }]);
+      if (bw.onAccount.length) {
+        body.push([{ content: 'Receipts on account (more than the bills due)', colSpan: 7, styles: { halign: 'left', fontStyle: 'bold', fontSize: 8, cellPadding: { top: 3, bottom: 1, left: 1.5, right: 1.5 } } }]);
+        bw.onAccount.forEach((p) => body.push([
+          { content: tDate(p.date), styles: { fontStyle: 'bold' } },
+          { content: (p.ref === 'ONLINE' ? 'Online checkout' : p.ref) + ' · ' + (p.method || '—') + (p.reference ? ' · ' + p.reference : '') + (p.forRef && p.forRef !== '—' ? ' · for ' + p.forRef : '') },
+          '', { content: tCr(p.credit), styles: { halign: 'right' } }, '', '', '',
+        ]));
+      }
+      const footStyle = { fontStyle: 'bold', lineWidth: { top: 0.3 }, lineColor: ink };
+      doc.autoTable({
+        startY: TOP, margin: { top: TOP, left: M, right: M, bottom: 16 }, theme: 'plain',
+        head: [[
+          { content: 'Date', styles: { halign: 'right' } }, 'Ref. No.',
+          { content: 'Bill\nAmount', styles: { halign: 'right' } }, { content: 'Received', styles: { halign: 'right' } },
+          { content: 'Pending\nAmount', styles: { halign: 'right' } }, { content: 'Due on', styles: { halign: 'right' } },
+          { content: 'Overdue\nby days', styles: { halign: 'right', fontStyle: 'bolditalic' } },
+        ]],
+        body,
+        foot: [[
+          '', { content: 'Total', styles: footStyle },
+          { content: tDr(bw.billed), styles: { ...footStyle, halign: 'right' } },
+          { content: tCr(bw.received + bw.unapplied), styles: { ...footStyle, halign: 'right' } },
+          { content: tDr(bw.pending), styles: { ...footStyle, halign: 'right' } }, '', '',
+        ]],
+        showFoot: 'lastPage', showHead: 'everyPage', rowPageBreak: 'avoid',
+        styles: { font: 'helvetica', fontSize: 8.4, textColor: ink, cellPadding: { top: 1.2, bottom: 1.2, left: 1.5, right: 1.5 }, valign: 'top', overflow: 'linebreak' },
+        headStyles: { fontStyle: 'bold', fontSize: 8.2, textColor: ink, lineWidth: { top: 0.3, bottom: 0.3 }, lineColor: ink, valign: 'bottom' },
+        footStyles: { textColor: ink, fontSize: 8.2 },
+        columnStyles: { 0: { cellWidth: 17, halign: 'right' }, 1: { cellWidth: 47 }, 2: { cellWidth: 29 }, 3: { cellWidth: 27 }, 4: { cellWidth: 29 }, 5: { cellWidth: 18 }, 6: { cellWidth: 15 } },
+        didDrawPage: () => { if (!drawn.has(doc.internal.getCurrentPageInfo().pageNumber)) header(); },
+      });
+
+      // Summary + ageing under the table.
+      let y = doc.lastAutoTable.finalY + 7;
+      if (y > H - 62) { doc.addPage(); header(); y = TOP; }
+      const lines = [
+        ['Total billed', tDr(bw.billed)],
+        ['Received against bills', tCr(bw.received)],
+        bw.unapplied > 0.5 ? ['Receipts on account', tCr(bw.unapplied)] : null,
+        ['Pending on bills', tDr(bw.pending)],
+        bw.unapplied > 0.5 ? ['Less: receipts on account', tCr(bw.unapplied)] : null,
+      ].filter(Boolean);
+      const bx = W - M - 82;
+      doc.setFontSize(8.5); doc.setTextColor(...ink);
+      lines.forEach(([k, v]) => { doc.setFont('helvetica', 'normal'); doc.text(k, bx + 2, y); doc.text(v || '0.00', W - M - 2, y, { align: 'right' }); y += 5; });
+      doc.setFillColor(...ink); doc.rect(bx, y - 3.6, 82, 7, 'F');
+      doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+      doc.text(bw.net < -0.5 ? 'Credit balance' : 'Net amount due', bx + 2, y + 1); doc.text(bw.net < -0.5 ? tCr(-bw.net) : (tDr(bw.net) || '0.00'), W - M - 2, y + 1, { align: 'right' });
+      y += 11;
+      doc.setTextColor(...ink); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+      doc.text('Ageing of pending bills as at ' + tDate(bw.asOf), M, y); y += 2;
+      doc.autoTable({
+        startY: y, margin: { top: TOP, left: M, right: M, bottom: 16 }, theme: 'grid',
+        head: [['0–30 days', '31–60 days', '61–90 days', 'Over 90 days', 'Total pending']],
+        body: [[tNum(bw.aging.current), tNum(bw.aging.d30), tNum(bw.aging.d60), tNum(bw.aging.d90), tNum(bw.pending)]],
+        styles: { font: 'helvetica', fontSize: 8.2, halign: 'right', textColor: ink, lineColor: [228, 233, 242], lineWidth: 0.2 },
+        headStyles: { fillColor: [244, 247, 252], textColor: grey, fontStyle: 'bold', fontSize: 7.5 },
+        bodyStyles: { fontStyle: 'bold' },
+        didDrawPage: () => { if (!drawn.has(doc.internal.getCurrentPageInfo().pageNumber)) header(); },
+      });
+      y = doc.lastAutoTable.finalY + 6;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.6); doc.setTextColor(...grey);
+      doc.text(doc.splitTextToSize('Overdue days are counted from the bill date to ' + tDate(bw.asOf) + '. Please report any discrepancy within 14 days; otherwise the balances shown will be taken as correct. Quote the bill reference with every payment.', W - 2 * M), M, y);
+      y += 12;
+      if (y < H - 24) {
+        doc.setDrawColor(...faint); doc.setLineWidth(0.2);
+        [[M, 'Prepared by: ' + (by || '')], [M + 64, 'For ' + LEDGER_CO.name], [M + 128, 'Client confirmation']].forEach(([x, t]) => { doc.line(x, y + 8, x + 54, y + 8); doc.text(t, x, y + 12); });
+      }
+    };
+
+    // ── Ledger Account section (Tally "Ledger Vouchers" style) ──
+    const LCOLS = { 0: { cellWidth: 18, halign: 'right' }, 1: { cellWidth: 7 }, 2: { cellWidth: 56 }, 3: { cellWidth: 20 }, 4: { cellWidth: 29, halign: 'right' }, 5: { cellWidth: 26, halign: 'right' }, 6: { cellWidth: 26, halign: 'right' } };
+    const LHEAD = ['Date', '', 'Particulars', 'Vch Type', 'Vch No.', 'Debit', 'Credit'];
+    const CONT_TOP = 37;
+    const ledgerSection = (acc, st) => {
+      cur_acc = acc; secSub = 'Ledger Account'; secTitle = ''; showAddr = true;
+      const y0 = header();
+      const body = [], cum = [];
+      let cd = 0, cc = 0, lastDate = null;
+      const op = st.opening;
+      body.push([
+        { content: tDate(from || (st.rows[0] && st.rows[0].date) || st.asOf) },
+        op < -0.5 ? 'Cr' : 'Dr',
+        { content: 'Opening Balance', styles: { fontStyle: 'bold' } }, '', '',
+        { content: op > 0.5 ? tNum(op) : '', styles: { fontStyle: 'bold' } },
+        { content: op < -0.5 ? tNum(-op) : '', styles: { fontStyle: 'bold' } },
+      ]);
+      if (op > 0.5) cd += op; else if (op < -0.5) cc += -op;
+      cum.push([cd, cc]);
+      st.rows.forEach((e) => {
+        const isInv = !!e.inv;
+        const part = isInv
+          ? (e.inv.type === 'order' ? 'Credit Sales · Online order' : 'Credit Sales') + (e.inv.quote ? ' · ' + e.inv.quote : '') + (e.inv.total <= 0 ? ' (amount to be confirmed)' : '')
+          : (e.ref === 'ONLINE' ? 'Online checkout payment' : [e.method || 'Payment', e.reference].filter(Boolean).join(' : '));
+        body.push([
+          { content: e.date === lastDate ? '' : tDate(e.date) },
+          isInv ? 'Cr' : 'Dr',
+          { content: part, styles: { fontStyle: 'bold' } },
+          { content: isInv ? 'Sales' : 'Receipt', styles: { fontStyle: 'bold', fontSize: 7.6 } },
+          { content: e.ref === 'ONLINE' ? 'ONLINE' : e.ref, styles: { fontSize: 7.8 } },
+          e.debit ? tNum(e.debit) : '',
+          e.credit ? tNum(e.credit) : '',
+        ]);
+        lastDate = e.date; cd += e.debit; cc += e.credit; cum.push([cd, cc]);
+      });
+      const closing = cd - cc, grand = Math.max(cd, cc);
+      const tl = { lineWidth: { top: 0.3 }, lineColor: ink };
+      const gl = { lineWidth: { top: 0.3, bottom: 0.6 }, lineColor: ink, fontStyle: 'bold' };
+      const colX = {}, firstIdx = {}, lastIdx = {};
+      const pageNo = () => doc.internal.getCurrentPageInfo().pageNumber;
+      const amtX = (i) => colX[i] ? colX[i].x + colX[i].w - 1.5 : 0;
+      const contHeader = (bf) => {
+        drawn.add(pageNo());
+        doc.setTextColor(...ink); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+        doc.text(LEDGER_CO.name.toUpperCase(), M, 13);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+        doc.text(accName(acc).toUpperCase() + '     Ledger Account  :  ' + period, M, 17.5);
+        doc.setDrawColor(...ink); doc.setLineWidth(0.3); doc.line(M, 19.5, W - M, 19.5); doc.line(M, 25.5, W - M, 25.5);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.2);
+        LHEAD.forEach((t, i) => { if (!t || !colX[i]) return; const right = i === 0 || i >= 4; doc.text(t, right ? amtX(i) : colX[i].x + 1.5, 23.6, right ? { align: 'right' } : undefined); });
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8.4);
+        doc.text('Brought Forward', colX[2].x + 1.5, 31);
+        doc.text(tNum(bf[0]), amtX(5), 31, { align: 'right' });
+        doc.text(tNum(bf[1]), amtX(6), 31, { align: 'right' });
+      };
+      doc.autoTable({
+        startY: y0 + 1, margin: { top: CONT_TOP, left: M, right: M, bottom: 24 }, theme: 'plain',
+        head: [LHEAD.map((t, i) => ({ content: t, styles: { halign: i === 0 || i >= 4 ? 'right' : 'left' } }))],
+        body,
+        foot: [
+          ['', '', '', '', '', { content: tNum(cd), styles: { ...tl, halign: 'right' } }, { content: tNum(cc), styles: { ...tl, halign: 'right' } }],
+          ['', closing < -0.5 ? 'Cr' : 'Dr', { content: 'Closing Balance', styles: { fontStyle: 'bold' } }, '', '',
+            { content: closing < -0.5 ? tNum(-closing) : '', styles: { halign: 'right' } }, { content: closing >= -0.5 ? tNum(Math.max(0, closing)) : '', styles: { halign: 'right' } }],
+          ['', '', '', '', '', { content: tNum(grand), styles: { ...gl, halign: 'right' } }, { content: tNum(grand), styles: { ...gl, halign: 'right' } }],
+        ],
+        showHead: 'firstPage', showFoot: 'lastPage', rowPageBreak: 'avoid',
+        styles: { font: 'helvetica', fontSize: 8.4, textColor: ink, cellPadding: { top: 1, bottom: 1, left: 1.5, right: 1.5 }, valign: 'top', overflow: 'linebreak' },
+        headStyles: { fontStyle: 'bold', fontSize: 8.2, textColor: ink, lineWidth: { top: 0.3, bottom: 0.3 }, lineColor: ink },
+        footStyles: { textColor: ink, fontSize: 8.4, fontStyle: 'normal' },
+        columnStyles: LCOLS,
+        didDrawCell: (data) => {
+          if (data.section === 'head') colX[data.column.index] = { x: data.cell.x, w: data.cell.width };
+          if (data.section === 'body' && data.column.index === 0) {
+            const p = pageNo();
+            if (firstIdx[p] === undefined) firstIdx[p] = data.row.index;
+            lastIdx[p] = data.row.index;
+          }
+        },
+        didDrawPage: (data) => {
+          const p = pageNo();
+          if (!drawn.has(p)) {
+            const fi = firstIdx[p];
+            contHeader(fi === undefined ? cum[cum.length - 1] : cum[Math.max(0, fi - 1)]);
+          }
+          const li = lastIdx[p];
+          if (li !== undefined && li < body.length - 1) {
+            const y = data.cursor.y + 3;
+            doc.setDrawColor(...ink); doc.setLineWidth(0.3);
+            doc.line(colX[5].x, y, colX[6].x + colX[6].w, y);
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(8.4); doc.setTextColor(...ink);
+            doc.text('Carried Over', colX[2].x + 1.5, y + 4.5);
+            doc.text(tNum(cum[li][0]), amtX(5), y + 4.5, { align: 'right' });
+            doc.text(tNum(cum[li][1]), amtX(6), y + 4.5, { align: 'right' });
+            doc.setFontSize(8); doc.text('continued ...', W - M, H - 14, { align: 'right' });
+          }
+        },
+      });
+
+      // Account summary under the ledger.
+      let y = doc.lastAutoTable.finalY + 9;
+      if (y > H - 58) { doc.addPage(); contHeader([cd, cc]); y = CONT_TOP + 4; }
+      const box = [
+        ['Opening balance', tDr(op) || '0.00'],
+        ['Add: sales invoiced (' + st.rows.filter((e) => e.inv).length + ')', tNum(st.debits)],
+        ['Less: payments received (' + st.rows.filter((e) => !e.inv).length + ')', tNum(st.credits)],
+      ];
+      const bx = W - M - 86;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...ink);
+      doc.text('ACCOUNT SUMMARY', bx, y); y += 5;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      box.forEach(([k, v]) => { doc.text(k, bx + 2, y); doc.text(v, W - M - 2, y, { align: 'right' }); y += 5; });
+      doc.setFillColor(...ink); doc.rect(bx, y - 3.6, 86, 7.2, 'F');
+      doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+      doc.text(closing < -0.5 ? 'Credit balance (in your favour)' : 'Balance due as at ' + tDate(st.asOf), bx + 2, y + 1.2);
+      doc.text(closing < -0.5 ? tNum(-closing) + ' Cr' : tNum(Math.max(0, closing)) + ' Dr', W - M - 2, y + 1.2, { align: 'right' });
+      const ty = y - 21;
+      doc.setTextColor(...grey); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.6);
+      doc.text(doc.splitTextToSize('Dr = amount owed by you (sales). Cr = amount paid / credited to your account. Please check this statement and report any discrepancy within 14 days of issue; otherwise the balance will be taken as correct. Kindly quote the voucher number with every payment.', bx - M - 8), M, ty + 5);
+      y += 14;
+      if (y < H - 30) {
+        doc.setDrawColor(...faint); doc.setLineWidth(0.2); doc.setFontSize(7.6);
+        [[M, 'Prepared by: ' + (by || '')], [M + 64, 'For ' + LEDGER_CO.name], [M + 128, 'Confirmed by client (sign & stamp)']].forEach(([x, t]) => { doc.line(x, y + 8, x + 54, y + 8); doc.text(t, x, y + 12); });
+      }
+    };
+
+    let firstPage = true;
+    const newPage = () => { if (!firstPage) doc.addPage(); firstPage = false; };
+    list.forEach(({ acc, sel }) => {
+      if (mode === 'statement' || mode === 'ledger') { newPage(); ledgerSection(acc, ledgerStatement(sel.entries, cur, from, to)); }
+      if (mode === 'statement' || mode === 'pending' || mode === 'billwise') {
+        pendingOnly = mode !== 'billwise';
+        const bw = billwise(sel, cur, from, to, pendingOnly);
+        if (mode === 'statement' && !bw.bills.length && !bw.onAccount.length) return;
+        newPage(); billSection(acc, bw);
+      }
+    });
+
+    const n = doc.internal.getNumberOfPages();
+    const stamp = 'Generated ' + tDate(lToday()) + ' · ' + LEDGER_CO.name;
+    for (let i = 1; i <= n; i++) {
+      doc.setPage(i);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.2); doc.setTextColor(...faint);
+      doc.text(stamp, M, H - 8);
+      doc.text('Page ' + i + ' of ' + n, W - M, H - 8, { align: 'right' });
+    }
+    doc.save(filename);
+  }
+
+  const PDF_MODES = [
+    { value: 'statement', label: 'Full statement (ledger + pending bills)', file: 'Statement' },
+    { value: 'ledger', label: 'Ledger account only', file: 'Ledger-Account' },
+    { value: 'billwise', label: 'Bill-wise · all bills with receipts', file: 'Bill-wise' },
+    { value: 'pending', label: 'Pending bills only', file: 'Pending-Bills' },
+  ];
+
   function ClientLedgerReport({ d }) {
     const L = window.KG_useLedger();
     const receipts = window.useReceipts();
@@ -606,6 +959,8 @@ ${ledgerFoot()}`;
     const [kind, setKind] = React.useState('All entries');
     const [bal, setBal] = React.useState('All accounts');
     const [q, setQ] = React.useState('');
+    const [busy, setBusy] = React.useState(false);
+    const [pdfMode, setPdfMode] = React.useState('statement');
 
     const accounts = React.useMemo(() => ledgerAccounts(d, L, receipts), [d, L, receipts]);
     const all = React.useMemo(() => accounts.map((acc) => ({ acc, ...ledgerEntries(acc, d, L, quotes, deliveries, receipts) })), [accounts, d, L, quotes, deliveries, receipts]);
@@ -617,6 +972,22 @@ ${ledgerFoot()}`;
     const setToC = (v) => { setTo(v); setPeriod(from || v ? 'Custom' : 'All time'); };
     const term = q.trim().toLowerCase();
     const sel = clientId === 'all' ? null : all.find((a) => a.acc.id === clientId);
+    const safe = (v) => String(v || '').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '');
+    // Build and download the statement PDF for one or many clients.
+    const downloadPDF = (items) => {
+      if (busy) return;
+      const list = items.map((x) => ({ acc: x.acc, sel: x }))
+        .filter((x) => items.length === 1 || x.sel.entries.some((e) => e.currency === cur));
+      if (!list.length) { ToastStore.push('No transactions to put in the PDF for this period.', { title: 'Nothing to download', icon: 'doc', tone: 'warn' }); return; }
+      const m = PDF_MODES.find((o) => o.value === pdfMode) || PDF_MODES[0];
+      const filename = (list.length === 1 ? safe(accName(list[0].acc)) : 'All-clients') + '-' + m.file + '-' + (to || lToday()) + '.pdf';
+      setBusy(true);
+      downloadStatementPDF(list, { cur, from, to, mode: m.value, by, filename })
+        .then(() => ToastStore.push(filename + ' downloaded.', { title: 'PDF ready', icon: 'download', tone: 'ok' }))
+        .catch((err) => { console.error(err); ToastStore.push('The PDF could not be made (check the internet connection). Use Print statement and choose "Save as PDF" instead.', { title: 'Download failed', icon: 'doc', tone: 'error' }); })
+        .then(() => setBusy(false));
+    };
+    const dim = busy ? { opacity: 0.55, pointerEvents: 'none' } : null;
 
     const controls = (
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -670,7 +1041,9 @@ ${ledgerFoot()}`;
               <Select value={bal} onChange={setBal} options={['All accounts', 'With balance due', 'Overdue (30+ days)', 'Settled', 'Credit balance']} width={190} />
               <div style={{ flex: 1 }} />
               <Button icon="doc" variant="ghost" size="sm" onClick={printAll} style={!list.length ? { opacity: 0.5, pointerEvents: 'none' } : null}>Print summary</Button>
-              <Button icon="download" variant="primary" size="sm" onClick={printStatements} style={!list.length ? { opacity: 0.5, pointerEvents: 'none' } : null}>Print all statements</Button>
+              <Button icon="doc" variant="ghost" size="sm" onClick={printStatements} style={!list.length ? { opacity: 0.5, pointerEvents: 'none' } : null}>Print all statements</Button>
+              <Select value={pdfMode} onChange={setPdfMode} options={PDF_MODES} width={270} />
+              <Button icon="download" variant="primary" size="sm" onClick={() => downloadPDF(list)} style={!list.length ? { opacity: 0.5, pointerEvents: 'none' } : dim}>{busy ? 'Preparing PDF…' : 'Download all (PDF)'}</Button>
             </div>
             {list.length === 0 ? <Empty icon="user" title="No client ledgers match" sub="Ledgers come from delivered orders, delivery notes and approved payments. Try another period or filter." /> : (
               <Table columns={[{ label: 'Client' }, { label: 'Opening', align: 'right' }, { label: 'Invoiced', align: 'right' }, { label: 'Paid', align: 'right' }, { label: 'Over 30 days', align: 'right' }, { label: 'Closing balance', align: 'right' }, { label: '', align: 'right' }]}>
@@ -685,7 +1058,8 @@ ${ledgerFoot()}`;
                       <Td align="right" style={{ fontWeight: 800, color: over > 0 ? T.red : T.faint, fontVariantNumeric: 'tabular-nums' }}>{lMoney(over, cur)}</Td>
                       <Td align="right" style={{ fontWeight: 800, color: r.st.closing > 0.5 ? T.red : T.green, fontVariantNumeric: 'tabular-nums' }}>{lBal(r.st.closing, cur)}</Td>
                       <Td align="right"><div onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', gap: 6 }}>
-                        <window.IconBtn icon="download" tone="blue" title="Print statement" onClick={() => printLedgerDoc(accName(r.acc) + ' statement ' + lToday(), [statementBody(r.acc, r.st, cur, from, to, by)])} />
+                        <window.IconBtn icon="doc" tone="ink" title="Print statement" onClick={() => printLedgerDoc(accName(r.acc) + ' statement ' + lToday(), [statementBody(r.acc, r.st, cur, from, to, by)])} />
+                        <window.IconBtn icon="download" tone="blue" title="Download PDF" onClick={() => downloadPDF([r])} />
                         <Button size="sm" variant="ghost" icon="doc" onClick={() => setClientId(r.acc.id)}>Ledger</Button>
                       </div></Td>
                     </Row>
@@ -733,7 +1107,9 @@ ${ledgerFoot()}`;
               <Button variant="ghost" size="sm" icon="user" onClick={() => setClientId('all')}>All clients</Button>
               <Button variant="ghost" size="sm" onClick={() => idx > 0 && setClientId(all[idx - 1].acc.id)} style={idx <= 0 ? { opacity: 0.45, pointerEvents: 'none' } : null}>‹ Prev</Button>
               <Button variant="ghost" size="sm" onClick={() => idx < all.length - 1 && setClientId(all[idx + 1].acc.id)} style={idx >= all.length - 1 ? { opacity: 0.45, pointerEvents: 'none' } : null}>Next ›</Button>
-              <Button variant="primary" size="sm" icon="download" onClick={print}>Print statement</Button>
+              <Button variant="ghost" size="sm" icon="doc" onClick={print}>Print statement</Button>
+              <Select value={pdfMode} onChange={setPdfMode} options={PDF_MODES} width={270} />
+              <Button variant="primary" size="sm" icon="download" onClick={() => downloadPDF([sel])} style={dim}>{busy ? 'Preparing PDF…' : 'Download PDF'}</Button>
             </div>
           </div>
         </Card>
